@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Starhopper</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#e8f1ff;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+canvas{display:block;position:fixed;inset:0}
+.p{position:fixed;background:rgba(8,14,28,.6);border:1px solid rgba(127,212,255,.25);border-radius:8px;padding:8px 12px;pointer-events:none}
+#hud{top:calc(10px + env(safe-area-inset-top,0px));left:10px}
+#tgt{top:calc(10px + env(safe-area-inset-top,0px));right:10px;text-align:right}
+#help{bottom:calc(10px + env(safe-area-inset-bottom,0px));left:10px;max-width:340px;font-size:11px;opacity:.85}
+#msg{max-width:min(560px,90vw);top:22%;left:50%;transform:translateX(-50%);opacity:0;transition:opacity .4s;font-size:16px;text-align:center}
+.bub{position:absolute;left:0;top:0;max-width:190px;background:rgba(8,14,28,.78);border:1px solid rgba(127,212,255,.4);border-radius:8px;padding:3px 7px;font-size:11px;display:none}
+#lb{position:fixed;inset:0;border-top:11vh solid #000;border-bottom:11vh solid #000;pointer-events:none;display:none;box-sizing:border-box}
+#ret{position:fixed;left:50%;top:40%;width:26px;height:26px;margin:-13px 0 0 -13px;border:1.5px solid rgba(255,90,90,.8);border-radius:50%;pointer-events:none}#ret:after{content:'';position:absolute;left:11px;top:11px;width:4px;height:4px;background:#ff5a5a;border-radius:50%}
+#labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+.lbl{position:absolute;left:0;top:0;font-size:11px;text-shadow:0 0 4px #000;white-space:nowrap;text-align:center;opacity:.8}
+.lbl:before{content:"";display:block;width:7px;height:7px;margin:0 auto 2px;border:1px solid #7fd4ff;border-radius:50%}
+.lbl.t{opacity:1;color:#ffe08a}.lbl.t:before{border-color:#ffe08a;background:#ffe08a}
+.lbl b{display:block}
+#ov{position:fixed;inset:0;background:rgba(0,0,10,.82);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;cursor:pointer}
+#ov h1{font:300 44px/1 system-ui,sans-serif;letter-spacing:.3em;margin:0 0 12px;color:#bfe6ff}
+#ov p{max-width:520px;margin:6px 0;opacity:.85}
+#ov .go{margin-top:18px;padding:10px 26px;border:1px solid #7fd4ff;border-radius:30px;color:#7fd4ff}
+</style></head><body>
+<div id="labels"></div>
+<div id="hud" class="p"><div id="loc"></div><div id="stat"></div></div>
+<div id="tgt" class="p"></div>
+<div id="help" class="p"><b>SHIP</b> mouse steer · W/S thrust · A/D strafe · Space/C up/down · Q/E roll · Shift boost · X brake · F exit/enter (when landed)<br><b>ON FOOT</b> WASD · Shift run · Space jump · hold E jetpack · mouse or arrow keys look · Z summon a giant meteor; press Z repeatedly to keep splitting every meteor piece (up to 5 times); pieces crush anything in their path · V camera view · scroll zoom · F board ship<br>SHIP: LEFT laser, RIGHT missile · ON FOOT: LEFT eye-beam (hold; melts the ground into glowing craters you can dig down into), RIGHT click or Q force lightning (hold; lifts people off the ground). Hazards: weather, hostile creatures, harsh planets — watch your HP<br>Find the gold relic beam on every planet · Tab target · R respawn · M sound · H hide help<br>⚠ Black holes (red markers) bend time and swallow ships — boost away from them!</div>
+<div id="msg" class="p"></div><div id="ret"></div><div id="lb"></div>
+<canvas id="radar" class="p" width="130" height="130" style="inset:auto;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));padding:0;width:130px;height:130px"></canvas>
+<div id="ov"><h1>STARHOPPER</h1>
+<p>Fourteen unique worlds, each with its own story and mission, orbit a burning sun. Planets are scaled up for real exploration, though not to true size. Fly your ship to any of them, land gently, then step out and explore on foot. Gravity, sky, terrain and life differ on every planet.</p>
+<p>Tip: use Shift to cross the void, X to brake, and descend slowly. Beware lava, the sun, two black holes and a pulsar. Hunt for nebulae (they slow your ship) and chase comets.</p>
+<div class="go" id="go">Generating worlds…</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const T=THREE,V=(x,y,z)=>new T.Vector3(x,y,z),clamp=(v,a,b)=>Math.min(b,Math.max(a,v)),L=(a,b,t)=>a+(b-a)*t,sm=t=>t*t*(3-2*t);
+function rng(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function h3(i,j,k,s){let h=Math.imul(i,374761393)^Math.imul(j,668265263)^Math.imul(k,1274126177)^Math.imul(s,1013904223);h=Math.imul(h^h>>>13,1274126177);h^=h>>>16;return(h>>>0)/4294967296}
+function vn(x,y,z,s){const i=Math.floor(x),j=Math.floor(y),k=Math.floor(z),u=sm(x-i),v=sm(y-j),w=sm(z-k),l=(a,b,c)=>h3(i+a,j+b,k+c,s);
+ return L(L(L(l(0,0,0),l(1,0,0),u),L(l(0,1,0),l(1,1,0),u),v),L(L(l(0,0,1),l(1,0,1),u),L(l(0,1,1),l(1,1,1),u),v),w)}
+function worley(x,y,z,s){const i=Math.floor(x),j=Math.floor(y),k=Math.floor(z);let a=9,b=9;for(let u=-1;u<=1;u++)for(let v=-1;v<=1;v++)for(let w=-1;w<=1;w++){const px=i+u+h3(i+u,j+v,k+w,s),py=j+v+h3(i+u,j+v,k+w,s+1),pz=k+w+h3(i+u,j+v,k+w,s+2),d=Math.hypot(px-x,py-y,pz-z);if(d<a){b=a;a=d}else if(d<b)b=d}return b-a}
+function nval(P,d){if(P.style==='cell'){const w=worley(d.x*P.f,d.y*P.f,d.z*P.f,P.seed);return clamp(sm(Math.min(1,w*2.4))*.85+vn(d.x*40,d.y*40,d.z*40,P.seed)*.1,0,1)}let a=.5,f=1,sum=0,nm=0;for(let o=0;o<P.oct;o++){let n=vn(d.x*P.f*f,d.y*P.f*f,d.z*P.f*f,P.seed+o);if(P.ridge)n=1-Math.abs(2*n-1);sum+=n*a;nm+=a;a*=.5;f*=2.03}
+ let n=clamp((sum/nm-.5)*P.k+.5,0,1);
+ if(P.style==='mesa'){const q=n*6,fl=Math.floor(q);n=(fl+sm(Math.min(1,(q-fl)*3)))/6}
+ if(P.style==='spike')n=Math.pow(n,2.2)*1.3;
+ return clamp(n,0,1)}
+const hOf=(P,d)=>P.amp*(Math.max(nval(P,d),P.sea)-.5)-dent(P,d);
+
+const PLANETS=[
+{name:'Verdara',desc:'Temperate world, oceans & forests',pos:[2900,0,900],R:300,amp:38,g:12,f:2,seed:11,oct:5,k:2.2,sea:.42,liquid:'water',lc:'#2a6fd0',atm:'#6fb7ff',pal:[[0,'#1b4a8a'],[.42,'#d8c88a'],[.47,'#4f9a3c'],[.62,'#2f6e2c'],[.78,'#7c7466'],[.9,'#f2f2f5'],[1,'#fff']],prop:{g:'cone',c:['#2e7d32','#3f8f3a','#1f5d2a'],n:550,s:[3,7]}},
+{name:'Rustfall',desc:'Terraced red mesas, thin dusty air',pos:[-3200,150,1500],R:260,amp:30,g:9,f:1.6,seed:23,oct:4,k:2,sea:0,style:'mesa',atm:'#e0915f',pal:[[0,'#a8502a'],[.4,'#c86a38'],[.7,'#e29a5a'],[1,'#f1c48a']],prop:{g:'cactus',c:['#8a4a2a','#b0623a'],n:420,s:[2,6]}},
+{name:'Glaciera',desc:'Frozen ridges & ice shards',pos:[800,-200,-5200],R:220,amp:36,g:8,f:2.4,seed:5,oct:5,k:2.4,sea:0,ridge:1,snow:1,atm:'#cfeaff',pal:[[0,'#9ec8e8'],[.5,'#e8f4ff'],[1,'#fff']],prop:{g:'spire',c:['#bfe6ff','#e6f6ff'],em:'#2a6a9a',ei:.35,n:380,s:[3,9]}},
+{name:'Ember',desc:'Volcanic hellscape, lava seas — deadly to touch',pos:[1700,80,-1500],R:280,amp:40,g:14,f:2.2,seed:77,oct:5,k:2.2,sea:.38,ridge:1,liquid:'lava',atm:'#ff7a45',pal:[[0,'#2a1410'],[.4,'#3a2a28'],[.7,'#5a4640'],[1,'#8a7468']],prop:{g:'spire',c:['#1c1618','#2c2024'],n:380,s:[3,9]}},
+{name:'Myconia',desc:'Glowing fungal forests, violet sky',pos:[-2000,300,-3600],R:240,amp:26,g:7,f:2.8,seed:3,oct:4,k:1.9,sea:0,atm:'#c78bff',pal:[[0,'#3a1d5c'],[.5,'#6b3a9c'],[.8,'#a85ac8'],[1,'#e08ae0']],prop:{g:'bulb',c:['#ff6fd8','#7af0ff','#ffd36f','#b78bff'],em:'#552277',ei:.7,n:650,s:[2,6]}},
+{name:'Crystara',desc:'Airless crystal spires under a black sky',pos:[5200,400,-2400],R:200,amp:50,g:6,f:3.2,seed:91,oct:5,k:2.6,sea:0,ridge:1,style:'spike',metal:.3,rough:.35,pal:[[0,'#10243a'],[.5,'#1d4a6a'],[1,'#7fe8ff']],prop:{g:'crystal',c:['#7ff3ff','#b88bff','#fff'],em:'#1b6a88',ei:.9,n:550,s:[3,10]}},
+{name:'Gigantus',desc:'Massive ringed super-world, crushing gravity',pos:[-6200,-600,-2800],R:600,amp:90,g:22,f:1.8,seed:40,oct:6,k:2.2,sea:0,ridge:1,det:56,ring:1,atm:'#9fb4d8',pal:[[0,'#4a5568'],[.5,'#7a8aa0'],[.85,'#b6c2d4'],[1,'#f0f4fa']],prop:{g:'rock',c:['#6a7280','#8a92a0'],n:700,s:[4,12]}},
+{name:'Pebble',desc:'Tiny candy moonlet — jump very high',pos:[3300,80,3200],R:90,amp:14,g:2.5,f:3,seed:14,oct:3,k:1.7,sea:0,det:20,jit:.2,pal:[[0,'#ff9ecb'],[.5,'#ffd86b'],[1,'#8cf0b0']],prop:{g:'rock',c:['#ff6f91','#6fb5ff','#ffe76f'],n:140,s:[1.5,4]}},
+{name:'Tidewater',desc:'Ocean world with sandy islands & palms',pos:[-800,-100,4300],R:320,amp:30,g:11,f:1.7,seed:63,oct:4,k:2,sea:.62,liquid:'water',lc:'#1fb5b8',atm:'#7ff0e0',pal:[[0,'#0e4f66'],[.62,'#f1e3b0'],[.68,'#58b84a'],[1,'#2d7a3a']],prop:{g:'cactus',c:['#3fa05a','#2f8a4a'],n:420,s:[3,6]}},
+{name:'Sulfura',desc:'Yellow sulfur lakes and acid-bright spires',pos:[-4800,200,-800],R:250,amp:34,g:10,f:2.6,seed:31,oct:5,k:2.3,sea:.36,liquid:'water',lc:'#d8c23a',atm:'#e8d85a',pal:[[0,'#6a5a10'],[.36,'#c8b030'],[.5,'#e8d04a'],[.75,'#a88a28'],[1,'#f4eaa0']],prop:{g:'spire',c:['#f0e060','#d8b830'],em:'#6a5a08',ei:.3,n:450,s:[2,7]}},
+{name:'Cobalt',desc:'Airless sapphire dunes and blue crystals',pos:[4200,-300,-5200],R:280,amp:28,g:9,f:1.4,seed:52,oct:4,k:1.7,sea:0,metal:.25,rough:.4,pal:[[0,'#0b1f5c'],[.4,'#1f4fb0'],[.7,'#4a86e8'],[1,'#b8d8ff']],prop:{g:'crystal',c:['#4aa8ff','#9fd0ff'],em:'#1a4a9a',ei:.8,n:350,s:[3,8]}},
+{name:'Rosette',desc:'Coral-pink seas and blossoming reefs',pos:[6000,100,6000],R:270,amp:30,g:8,f:2.1,seed:66,oct:5,k:2,sea:.5,liquid:'water',lc:'#ff7ab8',atm:'#ffb0d8',pal:[[0,'#7a2a5a'],[.5,'#f8d0b8'],[.56,'#ff8aa8'],[.8,'#e85a8a'],[1,'#fff0f4']],prop:{g:'bulb',c:['#ff9ec8','#ffd0e0','#ff6a9a'],em:'#802050',ei:.4,n:500,s:[2,6]}},
+{name:'Umbra',desc:'Lightless world of glowing violet crystals',pos:[-3500,-400,-6500],R:230,amp:44,g:11,f:2.8,seed:88,oct:5,k:2.4,sea:0,ridge:1,atm:'#4a3a8a',pal:[[0,'#0a0a14'],[.5,'#1a1a30'],[.85,'#3a2a5a'],[1,'#8a7ac8']],prop:{g:'crystal',c:['#a070ff','#ff60d0'],em:'#602090',ei:1,n:450,s:[3,9]}},
+{name:'Cytosa',desc:'Living world of giant cells ruled by viruses',pos:[-6500,100,4500],R:420,amp:34,g:9,f:3,seed:77,oct:2,k:1,sea:.12,style:'cell',liquid:'water',lc:'#b8e060',atm:'#ffa0c0',det:44,pal:[[0,'#6a1a3a'],[.35,'#c04a6a'],[.7,'#f0a0a0'],[1,'#fff0c8']],prop:{g:'virus',c:['#7aff6a','#d8ff4a','#ff6ad0'],em:'#2a8a20',ei:.8,n:20,s:[4,9]}}
+];
+
+const LORE={
+Verdara:['The last green cradle of the old settlers, long overgrown.','Recover the seed-vault relic','Seed vault secured; the forests can be replanted across the galaxy.'],
+Rustfall:['A mining colony abandoned when the dust storms never stopped.','Find the lost foreman beacon','His logs reveal the ore hidden under the mesas.'],
+Glaciera:['A frozen archive world where ancient climate data sleeps in the ice.','Retrieve the ice-core relic','The core records a thousand years of the sun.'],
+Ember:['A volcanic forge world scorched by tidal heating.','Reach the relic without touching lava','The forge-key is yours; the old foundries can restart.'],
+Myconia:['A fungal network that thinks as one mind and hums at night.','Awaken the spore-heart relic','The mycelium whispers its memory into your suit.'],
+Crystara:['An airless crystal moon that sings in the sunlight.','Collect the resonance shard','The shard rings in tune with the distant pulsar.'],
+Gigantus:['A giant ringed world whose gravity crushes weaker ships.','Survive the gravity and climb to the relic','Hard won: the anchor relic of the old navy.'],
+Pebble:['A tiny moonlet built as a playground by sky-farers.','Jump to the toy-box relic','Found it! A lullaby plays from the relic.'],
+Tidewater:['A drowned world of islands and palms, home to wandering fishers.','Reach the lighthouse relic','The lamp relights; ships can navigate again.'],
+Sulfura:['Yellow acid lakes feed the hardy chemists of the outer fleet.','Gather the catalyst relic','The catalyst unlocks clean fuel for everyone.'],
+Cobalt:['A dune world of blue glass mapped by silent survey drones.','Find the survey-drone relic','Its data charts safe routes past the black holes.'],
+Rosette:['Pink reefs of coral-like blossoms bloom beside warm seas.','Pick the first-bloom relic','The seeds are saved for future terraforming.'],
+Umbra:['A lightless world where violet crystals glow only for the brave.','Follow the glow to the lantern relic','The lantern lights the way home for lost pilots.'],
+Cytosa:['A living world ruled by enormous cells; roaming viruses hunt intruders.','Evade the viruses and reach the nucleus relic','The nucleus relic calms the cells; Cytosa welcomes explorers.']};
+const renderer=new T.WebGLRenderer({antialias:true,logarithmicDepthBuffer:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.3;renderer.setSize(innerWidth,innerHeight);document.body.prepend(renderer.domElement);
+const scene=new T.Scene();scene.background=new T.Color(0);const fog=scene.fog=new T.FogExp2(0,0);
+const cam=new T.PerspectiveCamera(65,innerWidth/innerHeight,.3,90000);
+addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+scene.add(new T.AmbientLight(0x6070a0,.45));
+const sunL=new T.PointLight(0xfff2dd,1.7,0,0);scene.add(sunL);
+const SUNR=500;
+const glowTex=(()=>{const c=document.createElement('canvas');c.width=c.height=128;const x=c.getContext('2d'),g=x.createRadialGradient(64,64,0,64,64,64);g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(.25,'rgba(255,255,255,.35)');g.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=g;x.fillRect(0,0,128,128);return new T.CanvasTexture(c)})();
+const corona=new T.Sprite(new T.SpriteMaterial({map:glowTex,color:0xffb050,blending:T.AdditiveBlending,depthWrite:false,fog:false,transparent:true}));corona.scale.setScalar(3200);scene.add(corona);
+const sunM=new T.MeshBasicMaterial({color:0xffd27a,fog:false});inject(sunM,'diffuseColor.rgb*=.7+.6*nz(vP*.02)*nz(vP*.07+3.);');scene.add(new T.Mesh(new T.SphereGeometry(SUNR,48,32),sunM));
+scene.add(new T.Mesh(new T.SphereGeometry(720,32,24),new T.MeshBasicMaterial({color:0xffa040,transparent:true,opacity:.22,side:T.BackSide,blending:T.AdditiveBlending,depthWrite:false,fog:false})));
+// stars
+const starMat=new T.PointsMaterial({color:0xdde8ff,map:glowTex,size:3,sizeAttenuation:false,transparent:true,fog:false,depthWrite:false});
+const sp=new Float32Array(9000),rs=rng(5);for(let i=0;i<3000;i++){const u=rs()*2-1,t=rs()*6.283,s=Math.sqrt(1-u*u);sp.set([s*Math.cos(t)*40000,u*40000,s*Math.sin(t)*40000],i*3)}
+const sg=new T.BufferGeometry();sg.setAttribute('position',new T.BufferAttribute(sp,3));const stars=new T.Points(sg,starMat);scene.add(stars);
+const belt=new T.InstancedMesh(new T.DodecahedronGeometry(1,0),new T.MeshStandardMaterial({flatShading:true,roughness:1,color:0x8a8078}),800),rb=rng(9),bm=new T.Matrix4(),bq=new T.Quaternion(),bs=V(0,0,0),bp=V(0,0,0);
+for(let i=0;i<800;i++){const a=rb()*6.283,r=1000+rb()*350,z=2+Math.pow(rb(),3)*26;bp.set(Math.cos(a)*r,(rb()-.5)*160,Math.sin(a)*r);bq.setFromEuler(new T.Euler(rb()*6,rb()*6,rb()*6));bs.set(z,z*(.6+rb()*.6),z);bm.compose(bp,bq,bs);belt.setMatrixAt(i,bm)}
+scene.add(belt);
+
+const WHITE=new T.Color(1,1,1),BLACK=new T.Color(0);
+const NZ='varying vec3 vP;varying vec3 vNn;float hh(vec3 p){return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453);}float nz(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(mix(hh(i),hh(i+vec3(1,0,0)),f.x),mix(hh(i+vec3(0,1,0)),hh(i+vec3(1,1,0)),f.x),f.y),mix(mix(hh(i+vec3(0,0,1)),hh(i+vec3(1,0,1)),f.x),mix(hh(i+vec3(0,1,1)),hh(i+vec3(1,1,1)),f.x),f.y),f.z);}';
+const BUMP='vec3 q0=dFdx(vViewPosition.xyz),q1=dFdy(vViewPosition.xyz);float h0=dFdx(dn),h1=dFdy(dn);vec3 r1=cross(q1,normal),r2=cross(normal,q0);float det=dot(q0,r1);normal=normalize(abs(det)*normal-.35*sign(det)*(h0*r1+h1*r2));';
+function inject(m,body,nb){m.onBeforeCompile=s=>{s.vertexShader=s.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vP;varying vec3 vNn;').replace('#include <begin_vertex>','#include <begin_vertex>\nvP=position;vNn=normal;');s.fragmentShader=s.fragmentShader.replace('#include <common>','#include <common>\n'+NZ).replace('#include <color_fragment>','#include <color_fragment>\n'+body).replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\n'+(nb||''))}}
+function colorAt(P,n,d,c){const s=P.pal;let i=0;while(i<s.length-2&&n>s[i+1][0])i++;const a=s[i],b=s[i+1];
+ c.copy(a[2]).lerp(b[2],clamp((n-a[0])/(b[0]-a[0]),0,1));
+ c.multiplyScalar(1+(h3(Math.floor(d.x*500),Math.floor(d.y*500),Math.floor(d.z*500),P.seed)-.5)*(P.jit||.12));
+ if(P.snow&&Math.abs(d.y)>.82-n*.15)c.lerp(WHITE,.8)}
+const propGeo={cone:()=>new T.ConeGeometry(.6,2,6).translate(0,1,0),rock:()=>new T.DodecahedronGeometry(1,0).translate(0,.4,0),
+ bulb:()=>new T.SphereGeometry(1,8,6).scale(1,1.6,1).translate(0,1.4,0),crystal:()=>new T.OctahedronGeometry(1).scale(.5,2.2,.5).translate(0,1.8,0),
+ spire:()=>new T.ConeGeometry(.5,3,5).translate(0,1.5,0),virus:()=>{const g=new T.IcosahedronGeometry(1,2),p=g.attributes.position,d=new T.Vector3();for(let i=0;i<p.count;i++){d.fromBufferAttribute(p,i).normalize();const sp=h3(Math.round(d.x*4),Math.round(d.y*4),Math.round(d.z*4),9)>.72?1.7:1;p.setXYZ(i,d.x*sp,d.y*sp,d.z*sp)}g.computeVertexNormals();return g.translate(0,1.4,0)},cactus:()=>new T.CylinderGeometry(.35,.4,3,6).translate(0,1.5,0)};
+const planets=[],labelsEl=document.getElementById('labels');
+function mkLabel(t){const e=document.createElement('div');e.className='lbl';e.innerHTML='<b>'+t+'</b><span></span>';labelsEl.appendChild(e);return e}
+function build(P){
+ P.R*=2;P.amp*=2;P.prop.n*=2;[P.story,P.quest,P.done]=LORE[P.name];P.sea=P.sea||0;P.pal=P.pal.map(([t,h])=>[t,h,new T.Color(h)]);
+ const g=new T.Group();g.position.set(...P.pos);scene.add(g);
+ const geo=new T.IcosahedronGeometry(P.R,P.det||40),pos=geo.attributes.position,col=new Float32Array(pos.count*3),d=V(0,0,0),c=new T.Color();
+ for(let i=0;i<pos.count;i++){d.fromBufferAttribute(pos,i).normalize();const n=nval(P,d),r=P.R+P.amp*(n-.5);pos.setXYZ(i,d.x*r,d.y*r,d.z*r);colorAt(P,n,d,c);col.set([c.r,c.g,c.b],i*3)}
+ P.lin=pos.count===60*((P.det||40)+1)**2;geo.setAttribute('color',new T.BufferAttribute(col,3));geo.computeVertexNormals();
+ const tm=new T.MeshStandardMaterial({vertexColors:true,flatShading:true,roughness:P.rough||1,metalness:P.metal||0});inject(tm,'float dn=nz(vP*.07)*.5+nz(vP*.3)*.3+nz(vP*1.4)*.2+nz(vP*6.)*.08;float sl=1.-dot(normalize(vNn),normalize(vP));float st=nz(vec3(vP.x*.02,length(vP)*.5,vP.z*.02));vec3 rk=diffuseColor.rgb*vec3(.6,.55,.52)*(.7+.6*nz(vP*.9));diffuseColor.rgb=mix(diffuseColor.rgb*(.55+.9*dn),rk,smoothstep(.04,.2,sl));diffuseColor.rgb*=mix(1.,.88+.12*sin(length(vP)*.8+st*4.),smoothstep(.05,.25,sl));',BUMP);P.geo=geo;P.cr=[];g.add(new T.Mesh(geo,tm));
+ if(P.liquid){const lr=P.R+P.amp*(P.sea-.5);g.add(new T.Mesh(new T.SphereGeometry(lr,64,48),P.liquid==='lava'?new T.MeshBasicMaterial({color:0xff5b14}):(()=>{const m=new T.MeshStandardMaterial({color:P.lc,roughness:.05,metalness:.3,transparent:true,opacity:.88});inject(m,'float dn=nz(vP*.15)+nz(vP*.6)*.5;diffuseColor.rgb*=.8+.35*dn;',BUMP);return m})()))}
+ let shell=null;
+ if(P.atm){shell=new T.Mesh(new T.SphereGeometry(P.R*1.18,48,32),new T.MeshBasicMaterial({color:P.atm,transparent:true,opacity:.16,side:T.BackSide,depthWrite:false,blending:T.AdditiveBlending,fog:false}));g.add(shell)}
+ let cloud=null;if(P.atm){const cm=new T.MeshLambertMaterial({color:new T.Color(P.atm).lerp(WHITE,.7),transparent:true,depthWrite:false,side:T.DoubleSide,fog:false});inject(cm,'float cn=nz(vP*.014)*.6+nz(vP*.04)*.3+nz(vP*.12)*.1;diffuseColor.a=smoothstep(.52,.72,cn)*.9;');cloud=new T.Mesh(new T.SphereGeometry(P.R+P.amp*.5+24,64,48),cm);g.add(cloud)}
+ if(P.ring){const rg=new T.Mesh((()=>{const q=new T.RingGeometry(P.R*1.5,P.R*2.5,96,48),p=q.attributes.position,c=new Float32Array(p.count*3),k=new T.Color();for(let i=0;i<p.count;i++){const t=(Math.hypot(p.getX(i),p.getY(i))-P.R*1.5)/P.R,b=.3+.7*vn(t*14,0,0,7)*(.5+.5*Math.sin(t*30));k.setRGB(.8*b+.1,.7*b+.08,.55*b+.05);c.set([k.r,k.g,k.b],i*3)}q.setAttribute('color',new T.BufferAttribute(c,3));return q.rotateX(-Math.PI/2)})(),new T.MeshBasicMaterial({vertexColors:true,side:T.DoubleSide,transparent:true,opacity:.6,fog:false}));rg.rotation.z=.35;g.add(rg)}
+ // props
+ const pr=P.prop,r=rng(P.seed*7),m=new T.Matrix4(),q=new T.Quaternion(),UP=V(0,1,0),sc=V(0,0,0);
+ const im=new T.InstancedMesh(propGeo[pr.g](),(()=>{const m=new T.MeshStandardMaterial({flatShading:true,roughness:.8,emissive:pr.em||0,emissiveIntensity:pr.ei||0});inject(m,'diffuseColor.rgb*=(.55+.45*smoothstep(0.,2.5,vP.y))*(.8+.4*nz(vP*2.5));');return m})(),pr.n);
+ let k=0;for(let t=0;t<pr.n*4&&k<pr.n;t++){const u=r()*2-1,a=r()*6.283,s=Math.sqrt(1-u*u);d.set(s*Math.cos(a),u,s*Math.sin(a));
+  const n=nval(P,d);if(P.liquid&&n<P.sea+.06)continue;const rr=P.R+P.amp*(n-.5)-.3,z=L(pr.s[0],pr.s[1],r())*1.6;
+  q.setFromUnitVectors(UP,d);sc.set(z,z*(.8+r()*.8),z);m.compose(d.clone().multiplyScalar(rr),q,sc);im.setMatrixAt(k,m);
+  im.setColorAt(k,c.set(pr.c[Math.floor(r()*pr.c.length)]));k++}
+ im.count=k;g.add(im);
+ planets.push({P,c:g.position,shell,cloud,atmC:P.atm?new T.Color(P.atm):BLACK,el:mkLabel(P.name)});
+}
+PLANETS.forEach(build);
+const gR=(pl,d)=>pl.P.R+hOf(pl.P,d);
+function gE(pl,d){const P=pl.P,a=2*Math.PI*P.R/(5*((P.det||40)+1))*.8/P.R,t1=V(0,1,0).cross(d);if(t1.lengthSq()<1e-4)t1.set(1,0,0).cross(d);t1.normalize();const t2=V(0,0,0).crossVectors(d,t1),q=V(0,0,0);let h=hOf(P,d);for(const[s,u]of[[1,0],[-1,0],[0,1],[0,-1]]){q.copy(d).addScaledVector(t1,s*a).addScaledVector(t2,u*a).normalize();h=Math.max(h,hOf(P,q))}return P.R+h}
+const IT=(1+Math.sqrt(5))/2,IV=[[-1,IT,0],[1,IT,0],[-1,-IT,0],[1,-IT,0],[0,-1,IT],[0,1,IT],[0,-1,-IT],[0,1,-IT],[IT,0,-1],[IT,0,1],[-IT,0,-1],[-IT,0,1]].map(a=>V(...a)),IF=[0,11,5,0,5,1,0,1,7,0,7,10,0,10,11,1,5,9,5,11,4,11,10,2,10,7,6,7,1,8,3,9,4,3,4,2,3,2,6,3,6,8,3,8,9,4,9,5,2,4,11,6,2,10,8,6,7,9,8,1];
+function meshR(P,d){const cols=(P.det||40)+1;
+ for(let f=0;f<60;f+=3){const a=IV[IF[f]],b=IV[IF[f+1]],c=IV[IF[f+2]],e1=V(0,0,0).subVectors(c,a),e2=V(0,0,0).subVectors(b,a),n=V(0,0,0).crossVectors(e2,e1),dn=n.dot(d);if(Math.abs(dn)<1e-9)continue;
+  const s=n.dot(a)/dn;if(s<=0)continue;const p=d.clone().multiplyScalar(s).sub(a),d11=e1.dot(e1),d12=e1.dot(e2),d22=e2.dot(e2),p1=p.dot(e1),p2=p.dot(e2),den=d11*d22-d12*d12,al=(d22*p1-d12*p2)/den,be=(d11*p2-d12*p1)/den;
+  if(al<-1e-6||be<-1e-6||al+be>1+1e-6)continue;
+  const x=al*cols,y=be*cols,i=Math.min(cols-1,Math.floor(x)),j=Math.min(cols-1,Math.floor(y)),fx=x-i,fy=y-j;
+  const pts=fx+fy<=1?[[i,j],[i+1,j],[i,j+1]]:[[i+1,j+1],[i,j+1],[i+1,j]];
+  const Q=pts.map(([u,v])=>{const w=a.clone().addScaledVector(e1,u/cols).addScaledVector(e2,v/cols).normalize();return w.multiplyScalar(P.R+P.amp*(nval(P,w)-.5)-dent(P,w))});
+  const nn=V(0,0,0).crossVectors(V(0,0,0).subVectors(Q[1],Q[0]),V(0,0,0).subVectors(Q[2],Q[0])),t=nn.dot(Q[0])/nn.dot(d);return t>0?t:P.R+hOf(P,d)}
+ return P.R+hOf(P,d)}
+function gM(pl,d){const P=pl.P;if(!P.lin)return gE(pl,d);let r=meshR(P,d);if(P.liquid)r=Math.max(r,P.R+P.amp*(P.sea-.5));return r}
+{const pl=planets[0],P=pl.P,mesh=scene.children.find(o=>o.position===pl.c).children[0],rc=new T.Raycaster();let bad=0;mesh.parent.updateMatrixWorld(true);
+ for(let i=0;i<4;i++){const d=V(Math.sin(i*2.1+.3),Math.cos(i*1.3),Math.sin(i*.7+2)).normalize();rc.set(pl.c.clone().addScaledVector(d,P.R*2),d.clone().negate());const h=rc.intersectObject(mesh)[0];if(!h||Math.abs(P.R*2-h.distance-meshR(P,d))>1.2)bad++}
+ if(bad)planets.forEach(o=>o.P.lin=false)}
+const cyto=planets.find(o=>o.P.name==='Cytosa');
+const viruses=[...Array(10)].map((_,i)=>{const m=new T.Mesh(propGeo.virus(),new T.MeshStandardMaterial({color:0x7aff6a,emissive:0x2a8a20,emissiveIntensity:.9,flatShading:true}));m.scale.setScalar(6);const u=rng(i+5),a=u()*6.283,z=u()*2-1,s=Math.sqrt(1-z*z),dir=V(s*Math.cos(a),z,s*Math.sin(a));m.position.copy(cyto.c).addScaledVector(dir,gR(cyto,dir)+3);scene.add(m);return{m,dir,ph:i*1.7}});
+const beacons=[];let relics=0;
+const holes=[{name:'Void Maw',p:V(-1500,4200,7000),Rs:60},{name:'Cinder',p:V(7500,-4200,3000),Rs:40}].map(h=>{h.GM=9.6e6*(h.Rs/60);h.el=mkLabel(h.name);
+ const g=new T.Group();g.position.copy(h.p);g.rotation.set(.3,0,.2);
+ g.add(new T.Mesh(new T.SphereGeometry(h.Rs,32,24),new T.MeshBasicMaterial({color:0,fog:false})));
+ g.add(new T.Mesh(new T.SphereGeometry(h.Rs*1.25,32,24),new T.MeshBasicMaterial({color:0xffb060,transparent:true,opacity:.35,side:T.BackSide,blending:T.AdditiveBlending,depthWrite:false,fog:false})));
+ const disk=new T.Mesh((()=>{const q=new T.RingGeometry(h.Rs*1.4,h.Rs*5,96,6),p=q.attributes.position,c=new Float32Array(p.count*3),k=new T.Color();for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),r=Math.hypot(x,y),t=(r-h.Rs*1.4)/(h.Rs*3.6),a=Math.atan2(y,x);k.setHSL(.11-.1*t,1,(.92-.6*t)*(.7+.3*Math.sin(a*5+t*9)));c.set([k.r,k.g,k.b],i*3)}q.setAttribute('color',new T.BufferAttribute(c,3));return q.rotateX(-Math.PI/2)})(),new T.MeshBasicMaterial({vertexColors:true,side:T.DoubleSide,transparent:true,opacity:.9,blending:T.AdditiveBlending,depthWrite:false,fog:false}));
+ const d2=disk.clone();d2.scale.setScalar(.45);d2.rotation.x=Math.PI/2;g.add(disk,d2);scene.add(g);h.disk=disk;return h});
+const pois=[],CE=new T.Euler();
+function neb(name,c,R,cols,seed){const r=rng(seed),g=new T.Group();g.position.copy(c);for(let i=0;i<70;i++){const u=r()*2-1,a=r()*6.283,s=Math.sqrt(1-u*u),d=R*Math.cbrt(r())*.9,m=new T.Sprite(new T.SpriteMaterial({map:glowTex,color:cols[Math.floor(r()*cols.length)],opacity:.08+r()*.1,blending:T.AdditiveBlending,depthWrite:false,fog:false,transparent:true}));m.position.set(s*Math.cos(a)*d,u*d*.6,s*Math.sin(a)*d);m.scale.setScalar(R*(.5+r()*.8));g.add(m)}scene.add(g);pois.push({name,p:c,r:R,el:mkLabel(name)})}
+neb('Emerald Nebula',V(-9000,800,4000),1700,[0x30e0a0,0x40b0ff,0xff60b0,0x60ff90],4);
+neb('Crab Remnant',V(1500,300,-9500),1300,[0xff7a30,0xff3a30,0x5a9aff,0xffc060],8);
+{const h={name:'Pulsar PSR B0531',p:V(1500,300,-9500),Rs:14,GM:3e6};h.el=mkLabel(h.name);const g=new T.Group(),tl=new T.Group(),sp=new T.Group();g.position.copy(h.p);tl.rotation.z=.6;g.add(tl);tl.add(sp);
+ g.add(new T.Mesh(new T.SphereGeometry(14,24,16),new T.MeshBasicMaterial({color:0xcfe8ff,fog:false})));
+ const gl=new T.Sprite(new T.SpriteMaterial({map:glowTex,color:0x7fb0ff,blending:T.AdditiveBlending,depthWrite:false,fog:false,transparent:true}));gl.scale.setScalar(260);g.add(gl);
+ const bmat=new T.MeshBasicMaterial({color:0x8fc4ff,transparent:true,opacity:.28,blending:T.AdditiveBlending,depthWrite:false,fog:false,side:T.DoubleSide});
+ [1,-1].forEach(s=>{const c=new T.Mesh(new T.ConeGeometry(70,1800,16,1,true).translate(0,-900,0),bmat);c.rotation.z=s*Math.PI/2;sp.add(c)});
+ scene.add(g);h.disk=sp;holes.push(h)}
+const comets=[0,1].map(ix=>{const g=new T.Group(),nm=['Comet Halvorsen','Comet Vega-9'][ix];g.add(new T.Mesh(new T.DodecahedronGeometry(14,0),new T.MeshStandardMaterial({color:0xcfd8e8,flatShading:true,roughness:.9})));
+ const co=new T.Sprite(new T.SpriteMaterial({map:glowTex,color:0xaaddff,blending:T.AdditiveBlending,depthWrite:false,fog:false,transparent:true}));co.scale.setScalar(160);g.add(co);
+ const tail=new T.Mesh(new T.ConeGeometry(30,900,12,1,true).translate(0,-450,0),new T.MeshBasicMaterial({color:0x9fd0ff,transparent:true,opacity:.3,blending:T.AdditiveBlending,depthWrite:false,fog:false,side:T.DoubleSide}));g.add(tail);scene.add(g);
+ const c={g,tail,pp:[2400,3600][ix],e:[.7,.55][ix],tilt:[.6,-.4][ix],k:[9e5,1.2e6][ix],th:ix*2.5,p:g.position,r:0,name:nm,el:mkLabel(nm)};pois.push(c);return c});
+const dp=new Float32Array(1200);for(let i=0;i<1200;i++)dp[i]=(Math.random()-.5)*120;
+const dg=new T.BufferGeometry();dg.setAttribute('position',new T.BufferAttribute(dp,3));
+const dust=new T.Points(dg,new T.PointsMaterial({color:0xaabbdd,size:1.5,sizeAttenuation:false,transparent:true,opacity:.5,fog:false,depthWrite:false}));dust.frustumCulled=false;scene.add(dust);
+planets.forEach(pl=>{const P=pl.P,r=rng(P.seed*13),d=V(0,0,0);for(let t=0;t<300;t++){const u=r()*2-1,a=r()*6.283,s=Math.sqrt(1-u*u);d.set(s*Math.cos(a),u,s*Math.sin(a));if(!P.liquid||nval(P,d)>P.sea+.08)break}
+ const g=new T.Group();g.position.copy(pl.c).addScaledVector(d,gR(pl,d)+3);g.quaternion.setFromUnitVectors(V(0,1,0),d);
+ const gem=new T.Mesh(new T.OctahedronGeometry(1.1),new T.MeshBasicMaterial({color:0xffd75a,fog:false}));g.add(gem);const sp2=new T.Sprite(new T.SpriteMaterial({map:glowTex,color:0xffd75a,blending:T.AdditiveBlending,depthWrite:false,fog:false,transparent:true}));sp2.scale.setScalar(40);g.add(sp2);
+ g.add(new T.Mesh(new T.CylinderGeometry(.6,.6,400,8,1,true).translate(0,200,0),new T.MeshBasicMaterial({color:0xffd75a,transparent:true,opacity:.35,blending:T.AdditiveBlending,depthWrite:false,fog:false})));
+ scene.add(g);beacons.push({g,gem,pl,got:false,off:g.position.clone().sub(pl.c)})});
+
+// ship
+const ship={pos:V(0,0,0),vel:V(0,0,0),q:new T.Quaternion(),landed:false,thr:0};
+const shipMesh=(()=>{const g=new T.Group(),H=new T.MeshStandardMaterial({color:0xcfd6e4,metalness:.5,roughness:.4,flatShading:true}),D=new T.MeshStandardMaterial({color:0x3a4256,metalness:.4,roughness:.5,flatShading:true});inject(H,'float pl=step(.93,fract(vP.z*1.2))+step(.96,fract(vP.x*1.5));diffuseColor.rgb*=(1.-.35*pl)*(.85+.3*nz(vP*5.));');
+ g.add(new T.Mesh(new T.ConeGeometry(1,5,8).rotateX(-Math.PI/2),H));
+ const w=new T.Mesh(new T.BoxGeometry(6,.15,2),D);w.position.set(0,-.2,1);g.add(w);
+ const f=new T.Mesh(new T.BoxGeometry(.15,1.2,1.2),D);f.position.set(0,.8,1.6);g.add(f);
+ const ck=new T.Mesh(new T.SphereGeometry(.55,12,8).scale(1,.7,1.4),new T.MeshStandardMaterial({color:0x66ccff,emissive:0x113355}));ck.position.set(0,.5,-.5);g.add(ck);
+ [[1.4,1.2],[-1.4,1.2],[0,-1.2]].forEach(([x,z])=>{const l=new T.Mesh(new T.CylinderGeometry(.08,.08,1.3,5),D);l.position.set(x,-.85,z);g.add(l);const ft=new T.Mesh(new T.SphereGeometry(.22,6,4),D);ft.position.set(x,-1.5,z);g.add(ft)});
+ const fl=new T.Mesh(new T.SphereGeometry(.5,8,6),new T.MeshBasicMaterial({color:0xffa040,fog:false}));fl.position.set(0,0,2.6);g.add(fl);g.userData.fl=fl;const nz2=new T.Mesh(new T.CylinderGeometry(.55,.7,.8,10).rotateX(Math.PI/2),D);nz2.position.set(0,0,2.3);g.add(nz2);[[-3,0xff3030],[3,0x30ff60]].forEach(([x,c])=>{const l=new T.Mesh(new T.SphereGeometry(.14,8,6),new T.MeshBasicMaterial({color:c,fog:false}));l.position.set(x,-.2,1);g.add(l)});
+ const fg=new T.Sprite(new T.SpriteMaterial({map:glowTex,color:0xff9040,blending:T.AdditiveBlending,depthWrite:false,fog:false,transparent:true}));fg.position.set(0,0,3);fg.scale.setScalar(.01);g.add(fg);g.userData.fg=fg;
+ const el=new T.PointLight(0xffa040,0,60,1);el.position.set(0,0,3);g.add(el);g.userData.el=el;scene.add(g);return g})();
+const SO=1.7;
+// astronaut
+const W={pos:V(0,0,0),f:V(0,0,-1),hv:V(0,0,0),vy:0,pitch:.25,grounded:false,ph:0,burn:0,fuel:1,face:V(0,0,-1),zoom:7,fp:false,jet:false,st:false};
+const body=(()=>{const g=new T.Group(),Wh=new T.MeshStandardMaterial({color:0xf2f4f8,roughness:.6}),Gy=new T.MeshStandardMaterial({color:0x6a7080,roughness:.6});
+ const add=(geo,m,x,y,z,p=g)=>{const o=new T.Mesh(geo,m);o.position.set(x,y,z);p.add(o);return o};
+ add(new T.BoxGeometry(.9,1.1,.6),Wh,0,.1,0);add(new T.SphereGeometry(.4,12,10),Wh,0,.95,0);
+ add(new T.BoxGeometry(.5,.26,.2),new T.MeshStandardMaterial({color:0x103050,emissive:0x1a5a8a,roughness:.2}),0,.98,-.3);
+ add(new T.BoxGeometry(.7,.9,.3),Gy,0,.15,.45);
+ g.userData.legs=[-.22,.22].map(x=>{const p=new T.Group();p.position.set(x,-.45,0);g.add(p);add(new T.BoxGeometry(.32,.8,.34),Wh,0,-.4,0,p);return p});
+ g.userData.arms=[-.6,.6].map(x=>{const p=new T.Group();p.position.set(x,.5,0);g.add(p);add(new T.BoxGeometry(.25,.8,.28),Wh,0,-.35,0,p);return p});
+ const Or=new T.MeshStandardMaterial({color:0xff7a2a,roughness:.5}),Gl=new T.MeshStandardMaterial({color:0x7fd0ff,emissive:0x1a5a8a,roughness:.05,metalness:.5,transparent:true,opacity:.7});
+ add(new T.SphereGeometry(.5,16,12),Gl,0,.97,-.08);
+ [-.55,.55].forEach(x=>add(new T.SphereGeometry(.26,10,8),Or,x,.55,0));
+ add(new T.BoxGeometry(.34,.24,.05),new T.MeshBasicMaterial({color:0x66ffcc}),0,.35,-.31);
+ [-.2,.2].forEach(x=>add(new T.CylinderGeometry(.14,.14,.8,8),Gy,x,.2,.62));
+ add(new T.CylinderGeometry(.02,.02,.7,4),Gy,.25,.9,.6);
+ g.userData.legs.forEach(p=>add(new T.BoxGeometry(.38,.22,.52),Or,0,-.8,-.06,p));
+ g.userData.arms.forEach(p=>add(new T.SphereGeometry(.15,8,6),Gy,0,-.78,0,p));
+ g.userData.jets=[-.2,.2].map(x=>{const s=new T.Sprite(new T.SpriteMaterial({map:glowTex,color:0x7fd0ff,blending:T.AdditiveBlending,depthWrite:false,fog:false,transparent:true}));s.position.set(x,-.4,.62);s.scale.setScalar(.01);g.add(s);return s});
+ const lt=new T.PointLight(0xfff0d0,.9,45,1);lt.position.set(0,2,0);g.add(lt);g.visible=false;scene.add(g);return g})();
+const PO=1.3;
+
+let mode='ship',target=1,running=false,lockedOnce=false,mx=0,my=0,drag=false;const keys={},sens=.0022;
+const $=id=>document.getElementById(id),msgEl=$('msg');let mt;
+const msg=(t,ms=2800)=>{msgEl.textContent=t;msgEl.style.opacity=1;clearTimeout(mt);mt=setTimeout(()=>msgEl.style.opacity=0,ms)};
+const fmt=d=>d>=1000?(d/1000).toFixed(1)+' km':Math.round(d)+' m';
+const shipLbl=mkLabel('YOUR SHIP');shipLbl.style.display='none';
+const _a=V(0,0,0),_b=V(0,0,0),_c=V(0,0,0),_d=V(0,0,0),_q=new T.Quaternion(),_q2=new T.Quaternion(),_e=new T.Euler(),_m=new T.Matrix4();
+
+function nearest(p){let b=null,bd=1e12;for(const pl of planets){const d=p.distanceTo(pl.c)-pl.P.R;if(d<bd){bd=d;b=pl}}return[b,bd]}
+function respawn(){const pl=planets[0];_a.set(.3,.5,.8).normalize();ship.pos.copy(pl.c).addScaledVector(_a,pl.P.R+420);ship.vel.set(0,0,0);ship.q.setFromUnitVectors(V(0,0,-1),_a.clone().negate());ship.landed=false;mode='ship';body.visible=false}
+respawn();
+
+function stepShip(dt){
+ const s=ship,k=keys,[pl,alt0]=nearest(s.pos),P=pl.P;
+ let rel=_a.copy(s.pos).sub(pl.c),r=rel.length(),n=_b.copy(rel).divideScalar(r);
+ const alt=r-gM(pl,n)-SO;
+ const ax=(k.KeyD?1:0)-(k.KeyA?1:0),ay=(k.Space?1:0)-(k.KeyC?1:0),az=(k.KeyS?1:0)-(k.KeyW?1:0),boost=k.ShiftLeft||k.ShiftRight,any=ax||ay||az;
+ if(s.landed&&any)s.landed=false;
+ let lev=0;
+ if(!s.landed){
+  const roll=(k.KeyQ?1:0)-(k.KeyE?1:0);
+  s.q.multiply(_q.setFromEuler(_e.set(-my*sens,-mx*sens,roll*1.6*dt,'YXZ'))).normalize();
+  const acc=_c.set(ax*38,ay*38,az*(boost?520:38)).applyQuaternion(s.q);s.vel.addScaledVector(acc,dt);
+  s.thr=clamp(Math.abs(az)*(boost?4:1)+Math.abs(ay)*.6+Math.abs(ax)*.4,0,4);
+  for(const o of planets){const rr=_d.copy(o.c).sub(s.pos),d=rr.length(),R=o.P.R;if(d<5*R){s.vel.addScaledVector(rr.divideScalar(d),o.P.g*(R/d)*(R/d)*Math.min(1,(5*R-d)/R)*dt)}}
+  {const d=s.pos.length();if(d>SUNR)s.vel.addScaledVector(_d.copy(s.pos).multiplyScalar(-1/d),1.5e7/(d*d)*dt)}
+  for(const h of holes){const rr=_d.copy(h.p).sub(s.pos),d=rr.length();if(d<4000)s.vel.addScaledVector(rr.divideScalar(d),h.GM/(d*d)*dt)}
+  for(const o of pois)if(o.r&&s.pos.distanceTo(o.p)<o.r)s.vel.multiplyScalar(Math.exp(-.3*dt));
+  if(k.KeyX)s.vel.multiplyScalar(Math.exp(-2.5*dt));
+  const lim=Math.min(4000,40+Math.max(0,alt)*1.1),spd=s.vel.length();if(spd>lim)s.vel.multiplyScalar((spd+(lim-spd)*Math.min(1,4*dt))/spd);
+  s.pos.addScaledVector(s.vel,dt);
+  rel=_a.copy(s.pos).sub(pl.c);r=rel.length();n=_b.copy(rel).divideScalar(r);const g2=gM(pl,n)+SO;
+  if(r<g2){s.pos.copy(pl.c).addScaledVector(n,g2);const vn=s.vel.dot(n);
+   if(vn<0){if(-vn>38){msg('Hard impact!');s.vel.addScaledVector(n,-1.35*vn)}else s.vel.addScaledVector(n,-vn)}
+   s.vel.multiplyScalar(Math.max(0,1-2.5*dt));
+   if(s.vel.length()<5&&!any){s.landed=true;s.vel.set(0,0,0);beep(110,.2);msg('Landed on '+P.name+' — press F to step outside')}}
+  if(alt<150)lev=1.2*(1-Math.max(0,alt)/150);
+ }else{s.thr=0;lev=5}
+ if(lev>0){const up=_d.set(0,1,0).applyQuaternion(s.q);_q.setFromUnitVectors(up,_b);_q2.identity().slerp(_q,Math.min(1,lev*dt));s.q.premultiply(_q2)}
+ for(const h of holes)if(s.pos.distanceTo(h.p)<h.Rs){msg('Swallowed by '+h.name+'! Respawning…');respawn();break}
+ if(s.pos.length()<SUNR+10){msg('Incinerated by the sun! Respawning…');respawn()}
+}
+function placeNearShip(){const pl=nearest(ship.pos)[0],rt=_c.set(1,0,0).applyQuaternion(ship.q);
+ _a.copy(ship.pos).addScaledVector(rt,5).sub(pl.c).normalize();W.pos.copy(pl.c).addScaledVector(_a,gM(pl,_a)+PO);
+ _b.set(0,0,-1).applyQuaternion(ship.q);W.f.copy(_b);W.face.copy(_b);W.hv.set(0,0,0);W.vy=0;W.grounded=true;W.burn=0}
+function stepWalk(dt){
+ const k=keys,pl=nearest(W.pos)[0],P=pl.P;
+ let rel=_a.copy(W.pos).sub(pl.c),r=rel.length();const up=_b.copy(rel).divideScalar(r);
+ W.f.addScaledVector(up,-W.f.dot(up)).normalize().applyAxisAngle(up,-mx*sens+((k.ArrowLeft?1:0)-(k.ArrowRight?1:0))*1.9*dt);
+ W.pitch=clamp(W.pitch-my*sens+((k.ArrowUp?1:0)-(k.ArrowDown?1:0))*1.2*dt,-.6,1.1);W.jet=false;
+ const right=_c.crossVectors(W.f,up),wet=P.liquid&&nval(P,up)<P.sea;
+ const fw=(k.KeyW?1:0)-(k.KeyS?1:0),st=(k.KeyD?1:0)-(k.KeyA?1:0),run=k.ShiftLeft||k.ShiftRight;
+ const hv=_d.set(0,0,0).addScaledVector(W.f,fw).addScaledVector(right,st);
+ if(hv.lengthSq()>0)hv.normalize().multiplyScalar((run?24:10)*(wet?.5:1));
+ W.hv.lerp(hv,1-Math.exp(-(W.grounded?10:2.5)*dt));W.hv.addScaledVector(up,-W.hv.dot(up));
+ if(k.Space&&W.grounded){W.vy=8.5;W.grounded=false}else if(k.KeyE&&W.fuel>0&&W.vy<14){W.vy+=(P.g+16)*dt;W.fuel-=dt*.3;W.jet=true}if(W.grounded)W.fuel=Math.min(1,W.fuel+dt*.8);
+ W.vy-=P.g*dt;
+ W.pos.addScaledVector(W.hv,dt).addScaledVector(up,W.vy*dt);
+ rel=_a.copy(W.pos).sub(pl.c);r=rel.length();const u2=_b.copy(rel).divideScalar(r),gr=gM(pl,u2)+PO;
+ if(r<gr||(W.grounded&&r<gr+.7&&W.vy<=0)){W.pos.copy(pl.c).addScaledVector(u2,gr);W.vy=0;W.grounded=true}else W.grounded=false;
+ if(P.liquid==='lava'&&W.grounded&&nval(P,u2)<P.sea){W.burn+=dt;if(W.burn>.9){msg('You burned in the lava! Back to the ship.');placeNearShip()}}else W.burn=0;
+ // body pose
+ const mv=W.hv.length(),tg=W.f;W.face.addScaledVector(u2,-W.face.dot(u2)).normalize();W.face.applyAxisAngle(u2,Math.atan2(_c.crossVectors(W.face,tg).dot(u2),W.face.dot(tg))*Math.min(1,16*dt));const rt=_c.crossVectors(W.face,u2);_d.copy(W.face).negate();_m.makeBasis(rt,u2,_d);body.quaternion.setFromRotationMatrix(_m).multiply(_q.setFromAxisAngle(V(1,0,0),-clamp(mv/19,0,1)*.28));body.position.copy(W.pos).addScaledVector(u2,W.grounded?Math.abs(Math.sin(W.ph))*.12*clamp(mv/9,0,1.5):0);
+ W.ph+=mv*dt*.6;const sw=W.grounded?Math.sin(W.ph)*clamp(mv/9,0,1.4)*.8:.5;if(W.grounded&&mv>2){const s2=Math.sin(W.ph)>0;if(s2!==W.st){W.st=s2;beep(70+Math.random()*30,.05)}}
+ const bt=Math.sin(performance.now()*.002)*.04,ja=W.jet?-2.4:null;body.userData.legs[0].rotation.x=sw;body.userData.legs[1].rotation.x=-sw;body.userData.arms[0].rotation.x=ja??(-sw*.8+bt);body.userData.arms[1].rotation.x=ja??(sw*.8-bt);body.userData.jets.forEach(j=>j.scale.setScalar(W.jet?.9+Math.random()*.4:.01));
+ // camera
+ const cp=Math.cos(W.pitch),ld=_d.copy(W.f).multiplyScalar(cp).addScaledVector(u2,Math.sin(W.pitch));
+ const cz=W.zoom*(vmW===2?2.2:1),cpos=_a.copy(W.pos).addScaledVector(u2,1.5+(vmW===2?cz*.3:0)).addScaledVector(V(0,0,0).crossVectors(W.f,u2),vmW===0?1.1:0).addScaledVector(ld,-cz);
+ const cr=_c.copy(cpos).sub(pl.c),cl=cr.length(),cd=cr.divideScalar(cl),mn=gM(pl,cd)+2;if(cl<mn)cpos.copy(pl.c).addScaledVector(cd,mn);
+ body.visible=true;cam.position.copy(cpos);cam.up.copy(u2);cam.lookAt(vmW===2?_b.copy(W.pos).addScaledVector(u2,1.2):_b.copy(cpos).addScaledVector(ld,50))
+}
+function sky(pos,pl){
+ const rel=_a.copy(pos).sub(pl.c),r=rel.length(),alt=r-pl.P.R;let a=0;
+ if(pl.P.atm)a=clamp((pl.P.R*.1-alt)/(pl.P.R*.05),0,1);
+ const up=rel.divideScalar(r),day=clamp(up.dot(_b.copy(pl.c).negate().normalize())*2.2+.35,0,1);
+ scene.background.copy(pl.atmC).multiplyScalar(a*(.03+.9*day));fog.color.copy(scene.background);fog.density=.0011*a*(.2+day);
+ starMat.opacity=1-a*day*.97;
+ for(const o of planets)if(o.shell)o.shell.material.opacity=.16;
+ if(pl.shell)pl.shell.material.opacity=.16*(1-a)+.03*a*day;
+}
+function cycle(){target=(target+1)%planets.length}
+function toggleShip(){
+ if(mode==='ship'){if(!ship.landed){msg('Land the ship first');return}placeNearShip();mode='walk';body.visible=true;msg('On foot. Return to your ship and press F to board.')}
+ else if(W.pos.distanceTo(ship.pos)<16){mode='ship';body.visible=false;msg('Boarded ship')}else msg('Too far from your ship ('+fmt(W.pos.distanceTo(ship.pos))+')');
+}
+let AC,eg,eo,muted=false;
+function initAudio(){try{AC=AC||new(window.AudioContext||window.webkitAudioContext)();eo=AC.createOscillator();eo.type='sawtooth';const f=AC.createBiquadFilter();f.type='lowpass';f.frequency.value=380;eg=AC.createGain();eg.gain.value=0;eo.connect(f);f.connect(eg);eg.connect(AC.destination);eo.start();if(AC.state==='suspended')AC.resume()}catch(e){}}
+function beep(fq,d){if(!AC||muted)return;try{const o=AC.createOscillator(),g=AC.createGain(),t=AC.currentTime;o.frequency.value=fq;o.frequency.exponentialRampToValueAtTime(fq*2,t+d);g.gain.value=.15;g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(AC.destination);o.start();o.stop(t+d)}catch(e){}}
+var noLock=false,vmS=0,vmW=0;const prevent=['Space','Tab','KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
+addEventListener('keydown',e=>{if(prevent.includes(e.code))e.preventDefault();if(e.repeat)return;keys[e.code]=true;
+ if(!running)return;if(e.code==='KeyF')toggleShip();if(e.code==='Tab'||e.code==='KeyT')cycle();if(e.code==='KeyR'){respawn();msg('Respawned')}if(e.code==='KeyM'){muted=!muted;msg(muted?'Sound off':'Sound on')}if(e.code==='KeyY'){yi=(yi+1)%4;msg('Time: '+YPS[yi]+' year(s) per second',1800)}if(e.code==='KeyZ'){if(cine)endCine();else if(MET||FR.length)splitAll();else summon()}if(e.code==='KeyG')talk();if(e.code==='KeyV'){if(mode==='ship'){vmS=(vmS+1)%3;msg('Camera: '+['Chase','Cockpit','High orbit'][vmS],1200)}else{vmW=(vmW+1)%3;msg('Camera: '+['Over-shoulder','Centered','Wide overhead'][vmW],1200)}}if(e.code==='KeyH')$('help').style.display=$('help').style.display==='none'?'':'none'});
+addEventListener('keyup',e=>keys[e.code]=false);
+addEventListener('wheel',e=>{W.zoom=clamp(W.zoom+e.deltaY*.01,3,18)},{passive:true});
+addEventListener('blur',()=>{for(const k in keys)keys[k]=false;lHeld=false;rHeld=false});
+addEventListener('mousedown',e=>{drag=true;if(!running)return;if(e.button===0)lHeld=true;if(e.button===2){if(mode==='ship')fireMissile();else rHeld=true}});addEventListener('mouseup',e=>{drag=false;if(e.button===0)lHeld=false;if(e.button===2)rHeld=false});addEventListener('contextmenu',e=>e.preventDefault());document.addEventListener('pointerlockchange',()=>{lHeld=false;rHeld=false});
+addEventListener('mousemove',e=>{if(running&&(document.pointerLockElement||drag||noLock)){mx+=e.movementX||0;my+=e.movementY||0}});
+document.addEventListener('pointerlockchange',()=>{if(document.pointerLockElement)lockedOnce=true;else if(lockedOnce&&running){running=false;lockedOnce=false;$('ov').style.display='flex';$('go').textContent='Paused — click to resume'}});
+$('ov').addEventListener('click',()=>{if($('go').dataset.ready!=='1')return;$('ov').style.display='none';running=true;initAudio();try{renderer.domElement.requestPointerLock()}catch(e){}setTimeout(()=>{noLock=!document.pointerLockElement},700)});
+$('go').textContent='Click to launch';$('go').dataset.ready='1';
+
+const rc=document.getElementById('radar').getContext('2d');
+function radar(){rc.clearRect(0,0,130,130);rc.strokeStyle='rgba(127,212,255,.3)';rc.beginPath();rc.arc(65,65,60,0,6.283);rc.moveTo(65,5);rc.lineTo(65,125);rc.moveTo(5,65);rc.lineTo(125,65);rc.stroke();
+ const iq=_q.copy(cam.quaternion).invert();
+ const dot=(p,col,s)=>{_d.copy(p).sub(cam.position).applyQuaternion(iq);const d=_d.length(),r=Math.min(60,Math.log(1+d/150)/Math.log(81)*60),a=Math.atan2(_d.x,-_d.z);rc.fillStyle=col;rc.fillRect(65+r*Math.sin(a)-s/2,65-r*Math.cos(a)-s/2,s,s)};
+ planets.forEach((o,i)=>dot(o.c,i===target?'#ffe08a':'#7fd4ff',i===target?7:5));holes.forEach(h=>dot(h.p,'#ff5a4a',7));pois.forEach(o=>dot(o.p,o.r?'#7fe8b0':'#e0f0ff',4));enemies.forEach(e=>{if(!e.dead&&e.pos.distanceTo(cam.position)<1500)dot(e.pos,'#ff3030',3)});rc.fillStyle='#fff';rc.fillRect(63,63,4,4)}
+const shots=[],msls=[],fx=[],Z=V(0,0,1),Zn=V(0,0,-1),AD=V(0,0,0),AO=V(0,0,0);let heat=0,ammo=8,kills=0,cd=0,mcd=0,amT=0,ov=false,lHeld=false,rHeld=false,force=1,sn=0;
+const spr=(c,s)=>{const m=new T.Sprite(new T.SpriteMaterial({map:glowTex,color:c,blending:T.AdditiveBlending,depthWrite:false,fog:false,transparent:true}));m.scale.setScalar(s);return m};
+const boltGeo=new T.CylinderGeometry(.12,.12,7,6).rotateX(Math.PI/2),boltMat=new T.MeshBasicMaterial({color:0xff5a4a,fog:false});
+const msGeo=new T.CylinderGeometry(.28,.28,2.4,8).rotateX(Math.PI/2),msMat=new T.MeshStandardMaterial({color:0xe8ecf4,metalness:.4,roughness:.4});
+function boom(p,s){const m=spr(0xffb050,s);m.position.copy(p);scene.add(m);fx.push({m,t:0,s});beep(110,.35)}
+const drones=[],r7=rng(77);
+for(let i=0;i<16;i++){const pl=planets[i%planets.length],g=new T.Group();g.add(new T.Mesh(new T.OctahedronGeometry(5),new T.MeshStandardMaterial({color:0x552222,emissive:0xff2a2a,emissiveIntensity:.8,flatShading:true})),new T.Mesh(new T.TorusGeometry(8,.6,6,16),new T.MeshBasicMaterial({color:0xff6a4a,fog:false})),spr(0xff3030,40));scene.add(g);
+ const a=r7()*6.283,z=r7()*2-1,s=Math.sqrt(1-z*z),dir=V(s*Math.cos(a),z,s*Math.sin(a)),ax=V(r7()-.5,r7()-.5,r7()-.5).normalize();
+ const d={m:g,pos:g.position,r:9,hp:3,dead:false,rt:0,pl,dir,ax,w:.02+r7()*.04,alt:pl.P.R+pl.P.amp*.5+250+r7()*300};
+ d.hit=n=>{d.hp-=n;if(d.hp<=0){d.dead=true;g.visible=false;d.rt=25;kills++;boom(d.pos,30)}else beep(300,.08)};drones.push(d)}
+viruses.forEach(v=>{v.pos=v.m.position;v.r=8;v.hit=()=>{v.dead=true;v.m.visible=false;v.rt=12;kills++;boom(v.pos,16)}});
+const tgts=()=>drones.concat(viruses,people,enemies,sims).filter(t=>!t.dead);
+const AP=V(0,0,0),AD2=V(0,0,0),RC=new T.Raycaster();
+function aimPoint(){cam.updateMatrixWorld();RC.setFromCamera({x:0,y:.2},cam);AD2.copy(RC.ray.direction);let bt=1e9,hit=false;for(const t of tgts()){const w=_c.copy(t.pos).sub(cam.position),s=w.dot(AD2);if(s<20||s>5000||s>=bt)continue;if(w.addScaledVector(AD2,-s).length()<t.r+4){bt=s;hit=true}}AP.copy(cam.position).addScaledVector(AD2,hit?bt:1500)}
+function aim(side){aimPoint();if(mode==='ship')AO.set(side*2.2,-.2,-1.5).applyQuaternion(ship.q).add(ship.pos);else AO.copy(W.pos).addScaledVector(W.face,1.2);AD.copy(AP).sub(AO).normalize()}
+function fireLaser(){if(cd>0||ov)return;cd=.11;heat+=.07;if(heat>=1){ov=true;msg('Laser overheated!')}aim((sn++%2)*2-1);
+ const m=new T.Mesh(boltGeo,boltMat);m.position.copy(AO);m.quaternion.setFromUnitVectors(Z,AD);scene.add(m);
+ shots.push({m,v:AD.clone().multiplyScalar(1800+(mode==='ship'?ship.vel.length():0)),t:1.6});beep(900,.05)}
+function fireMissile(){if(mcd>0||ammo<1)return;mcd=.9;ammo--;aim(0);let best=null,bd=.978;
+ for(const t of tgts()){const dd=_a.copy(t.pos).sub(AO),l=dd.length();if(l>7000||l<20)continue;const c=dd.dot(AD)/l;if(c>bd){bd=c;best=t}}
+ const g=new T.Group();g.add(new T.Mesh(msGeo,msMat));const f=spr(0xffa040,6);f.position.z=1.4;g.add(f);g.position.copy(AO);scene.add(g);
+ msls.push({g,d:AD.clone(),s:90,tg:best,t:7});beep(200,.2);msg(best?'Missile locked on '+(best.pl?'drone':'virus'):'Missile away (no lock)',1200)}
+const people=[],Zy=V(0,1,0),vb=new T.Mesh(new T.CylinderGeometry(.06,.06,1,6).rotateX(Math.PI/2).translate(0,0,.5),new T.MeshBasicMaterial({color:0xff2a2a,blending:T.AdditiveBlending,fog:false,transparent:true,opacity:.9,depthWrite:false})),vs=spr(0xff5a3a,14);vb.visible=vs.visible=false;scene.add(vb,vs);
+const bolts=Array.from({length:9},()=>{const l=new T.Line(new T.BufferGeometry().setFromPoints(Array.from({length:12},()=>V(0,0,0))),new T.LineBasicMaterial({color:0xaee0ff,blending:T.AdditiveBlending,fog:false,transparent:true}));l.frustumCulled=false;const pt=new T.Points(l.geometry,new T.PointsMaterial({color:0xcfeaff,size:22,map:glowTex,sizeAttenuation:false,transparent:true,blending:T.AdditiveBlending,depthWrite:false,fog:false}));pt.frustumCulled=false;l.add(pt);l.visible=false;scene.add(l);return l});
+function bolt(l,a,b,jm){const p=l.geometry.attributes.position,d=_c.copy(b).sub(a),len=d.length();for(let i=0;i<12;i++){const t=i/11,j=(i===0||i===11)?0:len*.03*(jm||1);p.setXYZ(i,a.x+d.x*t+(Math.random()-.5)*j,a.y+d.y*t+(Math.random()-.5)*j,a.z+d.z*t+(Math.random()-.5)*j)}p.needsUpdate=true;l.visible=true}
+for(let i=0;i<0;i++){const pl=planets[i%planets.length],r=rng(i*31+3),g=new T.Group(),sc=new T.MeshStandardMaterial({color:[0xd04a4a,0x4a7ad0,0x4ad08a,0xd0a84a][i%4],roughness:.7}),sk=new T.MeshStandardMaterial({color:[0xe8c9a0,0xc08a60,0x8a5a3a][i%3]}),pn=new T.MeshStandardMaterial({color:0x303848});
+ const add=(geo,m,x,y,z)=>{const o=new T.Mesh(geo,m);o.position.set(x,y,z);g.add(o)};
+ add(new T.BoxGeometry(.7,.9,.4),sc,0,.2,0);add(new T.SphereGeometry(.28,10,8),sk,0,.88,0);add(new T.BoxGeometry(.5,.8,.3),pn,0,-.65,0);add(new T.BoxGeometry(.2,.7,.2),sc,-.48,.2,0);add(new T.BoxGeometry(.2,.7,.2),sc,.48,.2,0);scene.add(g);
+ const a=r()*6.283,z=r()*2-1,s=Math.sqrt(1-z*z),p={m:g,pos:g.position,r:2.6,hp:4,dead:false,rt:0,pl,person:true,dir:V(s*Math.cos(a),z,s*Math.sin(a)),ax:V(r()-.5,r()-.5,r()-.5).normalize(),hy:0,zap:false,wt:0};
+ p.hit=n=>{p.hp-=n;if(p.hp<=0){p.dead=true;g.visible=false;p.rt=30;kills++;boom(p.pos,10)}};people.push(p)}
+function updPeople(dt){for(const p of people){if(p.dead){p.rt-=dt;if(p.rt<=0){p.dead=false;p.hp=4;p.m.visible=true}continue}
+ const P=p.pl.P;if(p.pl.c.distanceTo(cam.position)>P.R*3){p.zap=false;continue}
+ p.wt-=dt;if(p.wt<=0){p.wt=4+Math.random()*5;p.ax.set(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize()}
+ if(!p.zap)p.dir.applyAxisAngle(p.ax,dt*3/P.R);
+ p.hy+=((p.zap?5:0)-p.hy)*(1-Math.exp(-4*dt));
+ p.pos.copy(p.pl.c).addScaledVector(p.dir,gM(p.pl,p.dir)+1.1+p.hy);if(p.zap)p.pos.add(_c.set(Math.random()-.5,Math.random()-.5,Math.random()-.5).multiplyScalar(.6));
+ p.m.quaternion.setFromUnitVectors(Zy,p.dir);p.zap=false}}
+function footPowersOld(dt,T0){force=Math.min(1,force+dt*(rHeld?0:.25));let eye=false;
+ if(lHeld&&!ov){heat+=dt*.55;if(heat>=1){ov=true;msg('Eyes overheated!')}aim(0);const up=_a.copy(W.pos).sub(nearest(W.pos)[0].c).normalize();AO.copy(W.pos).addScaledVector(W.face,.5).addScaledVector(up,.9);AD.copy(AP).sub(AO).normalize();
+  let len=Math.min(600,AP.distanceTo(AO));
+  for(const t of T0){const w=_c.copy(t.pos).sub(AO),s=w.dot(AD);if(s<0||s>len)continue;if(w.addScaledVector(AD,-s).length()<t.r+1.5){len=s;t.hit(dt*1.6)}}
+  vb.position.copy(AO);vb.quaternion.setFromUnitVectors(Z,AD);vb.scale.set(1,1,len);vb.visible=true;vs.position.copy(AO).addScaledVector(AD,len);vs.visible=true;eye=true}
+ if(!eye){vb.visible=false;vs.visible=false}
+ bolts.forEach(b=>b.visible=false);
+ if((rHeld||keys.KeyQ)&&force>.02){aim(0);const up=_a.copy(W.pos).sub(nearest(W.pos)[0].c).normalize();AO.copy(W.pos).addScaledVector(W.face,.8).addScaledVector(up,.5);AD.copy(AP).sub(AO).normalize();
+  const cand=T0.filter(t=>{const w=_c.copy(t.pos).sub(cam.position),s=w.dot(AD2);if(s<3||t.pos.distanceTo(W.pos)>230)return false;return w.addScaledVector(AD2,-s).length()<t.r+7+s*.09}).sort((a,b)=>a.pos.distanceTo(cam.position)-b.pos.distanceTo(cam.position)),hits=cand.slice(0,1);
+  if(hits.length)for(const t of T0)if(t!==hits[0]&&hits.length<3&&t.pos.distanceTo(hits[0].pos)<70)hits.push(t);
+  force-=dt*(hits.length?.35:.12);
+  if(!hits.length)bolt(bolts[0],AO,_b.copy(AO).addScaledVector(AD,60));
+  hits.forEach((t,i)=>{bolt(bolts[i],i?hits[0].pos:AO,t.pos);t.hit(dt*(t.person||t.k?.6:1.2));if(t.person||t.k)t.zap=true;if(Math.random()<.3)beep(200+Math.random()*500,.03)})}}
+const K=566;planets.forEach(o=>{const p=o.c;o.r0=Math.hypot(p.x,p.z);o.a0=Math.atan2(p.z,p.x);o.y0=p.y;o.w=K/Math.pow(o.r0,1.5);o.dc=V(0,0,0)});
+const structs=[],enemies=[],eshots=[];let hp=100,hurtT=0,flash=0;
+function orbit(dt){for(const o of planets){_a.copy(o.c);o.a0+=o.w*dt;o.c.set(Math.cos(o.a0)*o.r0,o.y0,Math.sin(o.a0)*o.r0);o.dc.copy(o.c).sub(_a)}
+ const[p1,a1]=nearest(ship.pos);if(ship.landed||a1<p1.P.R*1.2)ship.pos.add(p1.dc);if(mode==='walk')W.pos.add(nearest(W.pos)[0].dc);
+ for(const s of structs)s.g.position.copy(s.pl.c).add(s.off);for(const v of viruses)v.m.position.add(cyto.dc)}
+function hurt(n,why){hp-=n;hurtT=3;if(hp<=0){hp=100;msg('You died ('+why+'). Respawned at your ship.',4000);placeNearShip()}}
+const ENVD={Sulfura:['Acid rain',1.4],Glaciera:['Freezing cold',.9],Ember:['Scorching heat',1.1],Crystara:['Radiation',.7],Cobalt:['Solar glare',.5]};
+function envDmg(dt){hurtT-=dt;if(mode!=='walk'){hp=Math.min(100,hp+dt*3);return}const e=ENVD[nearest(W.pos)[0].P.name];
+ if(e&&W.pos.distanceTo(ship.pos)>40){hurt(e[1]*dt,e[0]);if(Math.random()<dt*.15)msg(e[0]+'! Return to your ship for shelter',1500)}else if(hurtT<=0)hp=Math.min(100,hp+dt*2)}
+const WXT={Verdara:['rain',0x9fc8ff,45,2],Tidewater:['rain',0x9fd8ff,45,3],Gigantus:['rain',0xa0b4d8,40,4],Rosette:['petal',0xffa0c8,4,3],Rustfall:['sand',0xe0a060,5,28],Glaciera:['snow',0xffffff,6,4],Ember:['ash',0xff9060,5,8],Myconia:['spore',0xd8a0ff,1.5,2],Cytosa:['spore',0xffc0d0,2,2],Sulfura:['acid',0xe8e040,35,2],Umbra:['dust',0x9a8ae0,2,3]};
+const wxN=900,wxP=new Float32Array(wxN*3),wxL=new Float32Array(wxN*3);for(let i=0;i<wxN*3;i++)wxL[i]=(Math.random()-.5)*90;
+const wxG=new T.BufferGeometry();wxG.setAttribute('position',new T.BufferAttribute(wxP,3));
+const wxM=new T.PointsMaterial({size:2.4,map:glowTex,transparent:true,opacity:.8,depthWrite:false,fog:false,sizeAttenuation:false}),wxO=new T.Points(wxG,wxM);wxO.frustumCulled=false;wxO.visible=false;scene.add(wxO);
+function weather(dt,pos,pl){const w=WXT[pl.P.name];if(!w||pos.distanceTo(pl.c)-pl.P.R>pl.P.R*.12){wxO.visible=false;sunL.intensity=1.7;return}
+ wxO.visible=true;wxM.color.setHex(w[1]);const up=_a.copy(pos).sub(pl.c).normalize(),rt=_b.crossVectors(up,Zn).normalize(),fw=_c.crossVectors(rt,up);
+ for(let i=0;i<wxN;i++){let x=wxL[i*3],y=wxL[i*3+1];const z=wxL[i*3+2];y-=w[2]*dt*(.6+.4*((i*7)%5)/5);x+=w[3]*dt;if(y<-45)y+=90;if(x>45)x-=90;wxL[i*3]=x;wxL[i*3+1]=y;
+  wxP[i*3]=pos.x+rt.x*x+up.x*y+fw.x*z;wxP[i*3+1]=pos.y+rt.y*x+up.y*y+fw.y*z;wxP[i*3+2]=pos.z+rt.z*x+up.z*y+fw.z*z}
+ wxG.attributes.position.needsUpdate=true;
+ if(w[0]==='rain'){if(Math.random()<dt*.06){flash=1;beep(60,.5)}flash=Math.max(0,flash-dt*3);sunL.intensity=1.7+flash*2.5}else sunL.intensity=1.7}
+function mkStruct(n){const g=new T.Group(),M=(c,e)=>new T.MeshStandardMaterial({color:c,flatShading:true,roughness:.8,emissive:e||0}),ad=(geo,m,x,y,z)=>{const o=new T.Mesh(geo,m);o.position.set(x,y,z);g.add(o);return o},Bx=(w,h,d)=>new T.BoxGeometry(w,h,d),Cy=(a,b,h,s)=>new T.CylinderGeometry(a,b,h,s||8),Sp=r=>new T.SphereGeometry(r,10,8);
+ const sw={
+ Verdara:()=>{ad(Bx(14,8,10),M(0x8a5a3a),0,4,0);ad(new T.ConeGeometry(11,6,4),M(0x5a3a2a),0,11,0).rotation.y=.8;ad(Cy(3,3,16),M(0x6a6a70),14,8,0);ad(Sp(5),M(0x6a8a9a),14,18,0)},
+ Rustfall:()=>{ad(Cy(.8,3,30,4),M(0x8a4a2a),0,15,0);ad(Bx(10,5,8),M(0x6a3a2a),12,2.5,0);ad(Bx(10,5,8),M(0x6a3a2a),-12,2.5,4)},
+ Glaciera:()=>{ad(new T.SphereGeometry(10,12,8,0,6.283,0,1.571),M(0xdff4ff,0x103050),0,0,0);ad(Cy(.3,.3,16),M(0xcccccc),0,14,0);ad(Bx(8,4,6),M(0xaad0e8),14,2,0)},
+ Ember:()=>{ad(Cy(5,8,36),M(0x2a2024),0,18,0);ad(Sp(6),M(0xff5a1a,0xff3a00),0,38,0);ad(Bx(14,6,10),M(0x3a2c30),16,3,0)},
+ Myconia:()=>{for(let i=0;i<6;i++){const a=i*1.047,x=Math.cos(a)*14,z=Math.sin(a)*14;ad(Cy(1.5,2,14),M(0x9a60c8),x,7,z);ad(Sp(4),M(0xe070ff,0x602080),x,15,z)}},
+ Crystara:()=>{ad(new T.OctahedronGeometry(9).scale(.6,3,.6),M(0x7ff3ff,0x2a8aa8),0,24,0);ad(Cy(10,11,2,6),M(0x203848),0,1,0)},
+ Gigantus:()=>{ad(Bx(4,50,4),M(0x6a7280),0,25,0);ad(Bx(30,4,4),M(0x6a7280),0,40,0);ad(Bx(24,5,24),M(0x4a5260),0,2.5,0)},
+ Pebble:()=>{ad(Bx(8,8,8),M(0xff6f91),0,4,0);ad(Bx(8,8,8),M(0x6fb5ff),9,4,0);ad(Bx(8,8,8),M(0xffe76f),4.5,12,0);ad(new T.ConeGeometry(5,6,4),M(0x8cf0b0),4.5,19,0)},
+ Tidewater:()=>{ad(Cy(3,5,34,10),M(0xf0f0f0),0,17,0);ad(Cy(3.2,3.6,6,10),M(0xd04a4a),0,24,0);ad(Sp(3),M(0xfff0a0,0xffe070),0,37,0)},
+ Sulfura:()=>{ad(Cy(7,7,14,12),M(0xc8b030),0,7,0);ad(Cy(5,5,10,12),M(0xa89020),14,5,4);ad(Cy(.8,.8,28),M(0x706020),-10,14,0)},
+ Cobalt:()=>{ad(Cy(14,14,1.5,16),M(0x203868),0,.8,0);ad(Cy(1,1,18),M(0x4aa8ff,0x1a4a9a),0,10,0);ad(Sp(2.5),M(0x9fd0ff,0x3a7ac8),0,20,0)},
+ Rosette:()=>{ad(new T.TorusGeometry(12,2.5,8,16,3.1416),M(0xff9ec8),0,0,0);ad(Sp(4),M(0xffd0e0,0x802050),0,14,0)},
+ Umbra:()=>{for(let i=0;i<3;i++){ad(Cy(1.5,2.5,24),M(0x2a2040),(i-1)*12,12,0);ad(Sp(2.5),M(0xa070ff,0x6a30c8),(i-1)*12,26,0)}},
+ Cytosa:()=>{ad(Sp(12),M(0xff9ec0,0x802040),0,6,0);ad(Sp(5),M(0xfff0c8,0xff9040),0,8,0)}};
+ sw[n]();return g}
+const EN={Verdara:['Thornback',0x3a7a2a,'ico',7,0,12,40,0],Rustfall:['Dust Reaver',0xc06a3a,'cone',11,0,15,35,1],Glaciera:['Frost Wisp',0xaee0ff,'oct',9,1,8,25,1],Ember:['Magma Brute',0xff5a1a,'box',6,0,22,70,0],Myconia:['Spore Drifter',0xe070ff,'sph',5,1,9,30,1],Crystara:['Shard Sentinel',0x7ff3ff,'oct',8,1,12,45,0],Gigantus:['Titan Walker',0x8a92a0,'box',5,0,30,120,0],Pebble:['Gumdrop Gremlin',0xff6f91,'sph',14,0,6,15,1],Tidewater:['Tide Stalker',0x1fb5b8,'cone',10,0,14,40,1],Sulfura:['Acid Spitter',0xd8e040,'ico',8,1,10,30,0],Cobalt:['Glass Hunter',0x4aa8ff,'oct',12,1,11,35,1],Rosette:['Bloom Thief',0xff7ab8,'sph',13,0,8,20,1],Umbra:['Shade Lurker',0x7a40c8,'cone',10,0,16,50,1],Cytosa:['Phage Swarm',0x7aff6a,'ico',9,0,7,18,1]};
+function alertNear(e){for(const o of enemies)if(o.pl===e.pl&&!o.dead&&o.st==='patrol'&&o.pos.distanceTo(e.pos)<300)o.st='chase'}
+planets.forEach(pl=>{const P=pl.P,r=rng(P.seed*5),d=V(0,0,0);for(let t=0;t<300;t++){const u=r()*2-1,a=r()*6.283,s=Math.sqrt(1-u*u);d.set(s*Math.cos(a),u,s*Math.sin(a));if(!P.liquid||nval(P,d)>P.sea+.1)break}
+ const g=mkStruct(P.name);g.scale.setScalar(1.6);g.position.copy(pl.c).addScaledVector(d,gM(pl,d)-1);g.quaternion.setFromUnitVectors(Zy,d);scene.add(g);structs.push({g,pl,off:g.position.clone().sub(pl.c)});pl.sd=d.clone();
+ const k=EN[P.name];for(let i=0;i<3;i++){const sh=k[2],geo=sh==='ico'?new T.IcosahedronGeometry(1,0):sh==='oct'?new T.OctahedronGeometry(1):sh==='box'?new T.BoxGeometry(1.4,1.8,1.4):sh==='cone'?new T.ConeGeometry(1,2.4,6):new T.SphereGeometry(1,8,6),
+  m=new T.Mesh(geo,new T.MeshStandardMaterial({color:k[1],emissive:k[1],emissiveIntensity:.35,flatShading:true,roughness:.6}));m.scale.setScalar(P.name==='Gigantus'?7:3.2);m.add(spr(k[1],7));scene.add(m);
+  const e={m,pos:m.position,r:3.4,hp:k[6],dead:false,rt:0,pl,k,dir:d.clone().applyAxisAngle(V(r()-.5,r()-.5,r()-.5).normalize(),(40+r()*60)/P.R).normalize(),ax:V(1,0,0),wt:0,st:'patrol',spd:1,cd:0,ft:0};
+  e.hit=n=>{e.hp-=n;if(e.st==='patrol'){e.st='chase';alertNear(e)}if(e.hp<=0){e.dead=true;m.visible=false;e.rt=40;kills++;boom(e.pos,16)}};e.pos.copy(pl.c).addScaledVector(e.dir,gM(pl,e.dir)+1.8);enemies.push(e)}});
+function eShoot(e){const m=new T.Mesh(new T.SphereGeometry(.6,6,6),new T.MeshBasicMaterial({color:e.k[1],fog:false}));m.position.copy(e.pos);scene.add(m);eshots.push({m,v:_a.copy(W.pos).sub(e.pos).normalize().multiplyScalar(65).clone(),t:3,dmg:e.k[5]})}
+let spT=5;const ebubs=[0,1,2,3].map(()=>{const e=document.createElement('div');e.className='bub';e.style.borderColor='rgba(255,90,90,.7)';e.style.color='#ffb0a0';labelsEl.appendChild(e);return e});
+function updEnemies(dt){const wp=mode==='walk'?W.pos:null;
+ spT-=dt;if(wp&&spT<=0){spT=20;const pl=nearest(wp)[0],nr=enemies.filter(e=>e.pl===pl&&!e.dead&&e.pos.distanceTo(wp)<350);if(nr.length<2){const e=pick(enemies.filter(e=>e.pl===pl&&(e.dead||e.pos.distanceTo(wp)>350)));if(e){e.dead=false;e.hp=e.k[6];e.m.visible=true;e.dir.copy(rotD(_a.copy(wp).sub(pl.c).normalize(),(150+Math.random()*100)/pl.P.R));e.st='chase';msg('Hostiles detected: '+e.k[0]+'!',2500)}}}
+ for(const e of enemies){if(e.dead){e.rt-=dt;if(e.rt<=0){e.dead=false;e.hp=e.k[6];e.m.visible=true;e.st='patrol'}continue}
+  const P=e.pl.P;if(e.pl.c.distanceTo(cam.position)>P.R*3)continue;e.hy=e.hy||0;if(e.zap){e.hy+=(8-e.hy)*(1-Math.exp(-6*dt));e.zap=false;e.cd=1.2;e.pos.copy(e.pl.c).addScaledVector(e.dir,gM(e.pl,e.dir)+1.8+e.hy).add(_c.set(Math.random()-.5,Math.random()-.5,Math.random()-.5).multiplyScalar(.8));e.m.rotateY(.3);continue}e.hy*=Math.exp(-4*dt);
+  const dist=wp&&nearest(wp)[0]===e.pl?wp.distanceTo(e.pos):1e9,rg=e.k[4];
+  if(e.st==='patrol'){e.wt-=dt;if(e.wt<=0){e.wt=3+Math.random()*4;e.ax.set(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize()}e.spd=e.k[3]*.3;if(dist<140){e.st='chase';alertNear(e)}}
+  else if(e.st==='chase'){e.spd=e.k[3];if(dist>320)e.st='patrol';else if(dist<(rg?55:4))e.st='attack'}
+  else if(e.st==='attack'){e.spd=rg?e.k[3]*.25:0;e.cd-=dt;if(dist>(rg?80:8))e.st='chase';else if(e.cd<=0){e.cd=rg?2.2:1.1;if(rg)eShoot(e);else hurt(e.k[5],e.k[0])}if(e.hp<e.k[6]*.3&&e.k[7]){e.st='flee';e.ft=8}}
+  else{e.spd=e.k[3]*1.2;e.ft-=dt;e.hp+=dt*3;if(e.ft<=0)e.st='patrol'}
+  let ax=e.ax,sg=1;if(wp&&e.st!=='patrol'&&dist<1e8){const td=_a.copy(wp).sub(e.pl.c).normalize();ax=_b.crossVectors(e.dir,td);if(ax.lengthSq()>1e-8)ax.normalize();else ax=e.ax;if(e.st==='flee')sg=-1}
+  e.dir.applyAxisAngle(ax,sg*e.spd*dt/P.R).normalize();
+  e.pos.copy(e.pl.c).addScaledVector(e.dir,gM(e.pl,e.dir)+1.8+e.hy+Math.sin(performance.now()*.004+e.dir.x*9)*.4);e.m.quaternion.setFromUnitVectors(Zy,e.dir);e.m.rotateY(.02)}
+ for(let i=eshots.length-1;i>=0;i--){const s=eshots[i];s.m.position.addScaledVector(s.v,dt);s.t-=dt;if(mode==='walk'&&s.m.position.distanceTo(W.pos)<2.2){hurt(s.dmg,'enemy fire');s.t=0}if(s.t<=0){scene.remove(s.m);eshots.splice(i,1)}}
+ const ne=enemies.filter(e=>!e.dead&&e.pos.distanceTo(cam.position)<260).sort((a,b)=>a.pos.distanceTo(cam.position)-b.pos.distanceTo(cam.position));
+ ebubs.forEach((el,i)=>{const e=ne[i];if(!e){el.style.display='none';return}bv.copy(e.pos).addScaledVector(e.dir,5).project(cam);if(bv.z>1){el.style.display='none';return}el.style.display='block';el.textContent='☠ '+e.k[0]+' ['+e.st+'] '+Math.round(e.hp/e.k[6]*100)+'%';el.style.transform='translate('+((bv.x*.5+.5)*innerWidth)+'px,'+((-bv.y*.5+.5)*innerHeight)+'px) translate(-50%,-100%)'})}
+const sims=[],JOBS={Verdara:['farmer','botanist','forager'],Rustfall:['miner','foreman','driller'],Glaciera:['climatologist','ice-driller','archivist'],Ember:['smith','forge-hand','lava-diver'],Myconia:['mycologist','spore-farmer','listener'],Crystara:['crystal-tuner','prospector','cutter'],Gigantus:['engineer','guard','navy-veteran'],Pebble:['toy-maker','juggler','kite-flyer'],Tidewater:['fisher','lighthouse-keeper','diver'],Sulfura:['chemist','refiner','tank-tender'],Cobalt:['surveyor','drone-pilot','mapper'],Rosette:['florist','reef-gardener','perfumer'],Umbra:['lantern-keeper','night-guide','crystal-reader'],Cytosa:['cell-biologist','medic','sampler']};
+const PLN={Verdara:'The seed vault is guarded by thorn creatures.',Rustfall:'Dust Reavers hunt anyone outside at dusk.',Glaciera:'Frost Wisps drift where the wind is calm.',Ember:'Never step on the lava. Never.',Myconia:'The spores hum when a stranger arrives.',Crystara:'The crystals ring like bells at noon.',Gigantus:'Gravity here breaks weaker bones.',Pebble:'You can jump clear to the stars on this rock!',Tidewater:'The lighthouse has been dark for years.',Sulfura:'Keep your visor down in the acid rain.',Cobalt:'The old drones still map the dunes.',Rosette:'The first bloom opens only at dawn.',Umbra:'Follow the violet glow if you get lost.',Cytosa:'The viruses fear the nucleus light.'};
+const NAMES=['Ava','Kai','Mira','Tomas','Zed','Lina','Odo','Sana','Ruk','Nell','Juno','Pavel','Iris','Bram','Yuki','Cato'],TRAITS=['friendly','grumpy','curious','lazy','brave','shy'];
+let tod=7,day=1,sn2=0;const pick=a=>a[Math.floor(Math.random()*a.length)],rotD=(d,a)=>d.clone().applyAxisAngle(V(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize(),a),bv=V(0,0,0);
+const bubs=[0,1,2].map(()=>{const e=document.createElement('div');e.className='bub';labelsEl.appendChild(e);return e});
+function mkHuman(ci){const g=new T.Group(),sc=new T.MeshStandardMaterial({color:[0xd04a4a,0x4a7ad0,0x4ad08a,0xd0a84a,0xa04ad0][ci%5],roughness:.7}),sk=new T.MeshStandardMaterial({color:[0xe8c9a0,0xc08a60,0x8a5a3a][ci%3]}),pn=new T.MeshStandardMaterial({color:0x303848}),ad=(geo,m,x,y,z)=>{const o=new T.Mesh(geo,m);o.position.set(x,y,z);g.add(o)};
+ ad(new T.BoxGeometry(.7,.9,.4),sc,0,.2,0);ad(new T.SphereGeometry(.28,10,8),sk,0,.88,0);ad(new T.BoxGeometry(.5,.8,.3),pn,0,-.65,0);ad(new T.BoxGeometry(.2,.7,.2),sc,-.48,.2,0);ad(new T.BoxGeometry(.2,.7,.2),sc,.48,.2,0);return g}
+function mkSim(pl,age,home){const P=pl.P,m=mkHuman(sn2++);scene.add(m);
+ const s={m,pos:m.position,r:2.6,hp:4,dead:false,rt:0,pl,person:true,zap:false,hy:0,name:pick(NAMES),age,trait:pick(TRAITS),home,dir:home.clone(),hun:Math.random()*.4,en:Math.random()*.4,soc:Math.random()*.4,rel:0,partner:null,job:'child',say:'',st:0,fwd:V(0,0,-1),wd:rotD(pl.sd,(20+Math.random()*50)/P.R),pd:rotD(pl.plaza,(4+Math.random()*14)/P.R)};
+ if(age>=16)s.job=pick(JOBS[P.name]);s.hit=n=>{s.hp-=n;if(s.hp<=0){s.dead=true;m.visible=false;s.rt=25;kills++;boom(s.pos,10)}};sims.push(s);return s}
+planets.forEach(pl=>{const P=pl.P;pl.plaza=rotD(pl.sd,(45+Math.random()*10)/P.R);
+ const hs=[0,1,2].map(i=>{const hd=rotD(pl.sd,(95+i*35)/P.R),g=new T.Group();g.add(new T.Mesh(new T.BoxGeometry(7,4,7),new T.MeshStandardMaterial({color:P.pal[2][2],flatShading:true})),new T.Mesh(new T.ConeGeometry(6,3,4),new T.MeshStandardMaterial({color:0x5a4a40,flatShading:true})));
+  g.children[0].position.y=2;g.children[1].position.set(0,5.5,0);g.children[1].rotation.y=.785;g.position.copy(pl.c).addScaledVector(hd,gM(pl,hd)-.2);g.quaternion.setFromUnitVectors(Zy,hd);scene.add(g);structs.push({g,pl,off:g.position.clone().sub(pl.c)});return hd});
+ [34,31,8,52,22].forEach((a,i)=>mkSim(pl,a,hs[i%3]));const L0=sims.filter(s=>s.pl===pl);L0[0].partner=L0[1];L0[1].partner=L0[0]});
+const actOf=s=>{const h=tod;if(s.job==='child')return h<7||h>=20?'sleep':'play';return h<6||h>=22?'sleep':h<8?'eat':h<12?'work':h<13?'eat':h<17?'work':h<20?'social':'home'};
+const moodOf=s=>{const m=1-(s.hun*.5+s.en*.3+s.soc*.2);return m>.75?'happy':m>.55?'content':s.hun>.6?'hungry':s.en>.7?'exhausted':'lonely'};
+function lineOf(s){const a=actOf(s),L=[];if(a==='sleep')return 'Zzz...';
+ if(a==='work')L.push('Another day as a '+s.job+'.','Work never ends for a '+s.job+'.');if(a==='eat')L.push('Time for a meal!','I am starving.');if(a==='social'||a==='play')L.push(s.partner?'Have you seen '+s.partner.name+'?':'Lovely evening.','Join us at the plaza!');
+ L.push(PLN[s.pl.P.name]);L.push({friendly:'Hello, traveler!',grumpy:'What do you want?',curious:'Where are you from?',lazy:'Ugh, I need a nap.',brave:'I fear nothing out here.',shy:'Um... hi.'}[s.trait]);return pick(L)}
+function newDay(){for(const s of sims){if(s.dead)continue;s.age++;if(s.age===16)s.job=pick(JOBS[s.pl.P.name]);if(s.age>=75&&Math.random()<.4){s.dead=true;s.m.visible=false;s.rt=5;if(nearest(cam.position)[0]===s.pl)msg(s.name+' passed away at '+s.age+'.',3000)}}
+ for(const pl of planets){const L0=sims.filter(s=>s.pl===pl&&!s.dead);if(L0.length&&L0.length<9&&L0.some(s=>s.partner&&!s.partner.dead&&s.age>=18)&&Math.random()<.25){mkSim(pl,0,L0[0].home);if(nearest(cam.position)[0]===pl)msg('A baby was born on '+pl.P.name+'!',2500)}}}
+function updSims(dt){tod+=dt/15;if(tod>=24){tod-=24;day++;newDay()}const near=[];
+ for(const s of sims){if(s.dead){s.rt-=dt;if(s.rt<=0){s.dead=false;s.hp=4;s.age=0;s.job='child';s.name=pick(NAMES);s.partner=null;s.dir.copy(s.home);s.m.visible=true}continue}
+  const a=actOf(s);s.hun=a==='eat'?0:Math.min(1,s.hun+dt*.003);s.en=a==='sleep'?Math.max(0,s.en-dt*.02):Math.min(1,s.en+dt*.0015);s.soc=(a==='social'||a==='play')?Math.max(0,s.soc-dt*.01):Math.min(1,s.soc+dt*.001);
+  const P=s.pl.P;if(s.pl.c.distanceTo(cam.position)>P.R*3){s.zap=false;continue}
+  const tg=(a==='sleep'||a==='home')?s.home:a==='work'?s.wd:s.pd,ang=s.dir.angleTo(tg);
+  if(!s.zap&&ang*P.R>1.5){_a.crossVectors(s.dir,tg).normalize();s.fwd.copy(_b.copy(_a).cross(s.dir));s.dir.applyAxisAngle(_a,Math.min(ang,(s.job==='child'?3.5:2.8)*dt/P.R)).normalize()}
+  s.hy+=((s.zap?8:0)-s.hy)*(1-Math.exp(-6*dt));const sc=s.job==='child'?.6+.4*Math.min(s.age/16,1):1;
+  s.pos.copy(s.pl.c).addScaledVector(s.dir,gM(s.pl,s.dir)+1.05*sc+s.hy);if(s.zap)s.pos.add(_c.set(Math.random()-.5,Math.random()-.5,Math.random()-.5).multiplyScalar(.6));
+  s.fwd.addScaledVector(s.dir,-s.fwd.dot(s.dir)).normalize();s.m.scale.setScalar(sc);_b.crossVectors(s.fwd,s.dir);_d.copy(s.fwd).negate();_m.makeBasis(_b,s.dir,_d);s.m.quaternion.setFromRotationMatrix(_m);s.zap=false;
+  if(mode==='walk'&&W.pos.distanceTo(s.pos)<28)near.push(s)}
+ near.sort((p,q)=>p.pos.distanceTo(W.pos)-q.pos.distanceTo(W.pos));
+ bubs.forEach((e,i)=>{const s=near[i];if(!s){e.style.display='none';return}const t=performance.now();if(t>s.st){s.say=lineOf(s);s.st=t+7000+Math.random()*4000}
+  bv.copy(s.pos).addScaledVector(s.dir,2.2*s.m.scale.x).project(cam);if(bv.z>1){e.style.display='none';return}e.style.display='block';e.textContent=s.name+': '+s.say;e.style.transform='translate('+((bv.x*.5+.5)*innerWidth)+'px,'+((-bv.y*.5+.5)*innerHeight)+'px) translate(-50%,-100%)'})}
+function talk(){if(mode!=='walk')return;let b=null,bd=8;for(const s of sims)if(!s.dead){const d=s.pos.distanceTo(W.pos);if(d<bd){bd=d;b=s}}if(!b){msg('No one close enough to talk to (stand within 8 m)',1500);return}
+ b.rel++;const bc=beacons.find(x=>x.pl===b.pl&&!x.got);msg(b.name+', '+b.job+', age '+b.age+' ('+moodOf(b)+', '+b.trait+')'+(b.partner?' — partner of '+b.partner.name:'')+': "'+lineOf(b)+'"'+(b.rel>=3&&bc?' — Psst: the relic is '+fmt(bc.g.position.distanceTo(b.pos))+' from here.':b.rel<3?' ['+b.rel+'/3 trust]':''),7000)}
+let shake=0;const MAXD=220,tmpV=V(0,0,0),GL=new T.Color(),BC=new T.Color();
+function dent(P,d){if(!P.cr||!P.cr.length)return 0;let m=0;for(const c of P.cr){const cs=d.dot(c.d);if(cs<c.cc)continue;const t=Math.acos(Math.min(1,cs))/c.rad,u=1-t*t;if(u>0)m=Math.max(m,c.dep*u*u)}return m}
+function rayGround(pl,o,d,maxL){const P=pl.P,st=clamp(maxL/60,4,14);let pt=0;for(let t=st;t<=maxL;t+=st){_c.copy(o).addScaledVector(d,t).sub(pl.c);const r=_c.length();if(r<P.R+hOf(P,_c.divideScalar(r))){let a=pt,b=t;for(let k=0;k<6;k++){const m=(a+b)/2;_c.copy(o).addScaledVector(d,m).sub(pl.c);const rr=_c.length();if(rr<P.R+hOf(P,_c.divideScalar(rr)))b=m;else a=m}return b}pt=t}return -1}
+function melt(pl,dir,dt,rate,big){const P=pl.P,cell=2*Math.PI*P.R/(5*((P.det||40)+1));let c=P.cr.find(c=>dir.dot(c.d)>Math.cos(c.rad*.5));
+ if(!c){if(P.cr.length>=40)return;const rad=(big||Math.max(26,cell*1.7))/P.R;c={d:dir.clone(),rad,cc:Math.cos(rad),c13:Math.cos(rad*1.3),dep:.5,heat:1,idx:null,need:true,dirty:true,sp:spr(0xff7a20,rad*P.R*5)};scene.add(c.sp);P.cr.push(c);
+  const pos=P.geo.attributes.position,ix=[];for(let i=0;i<pos.count;i++){tmpV.fromBufferAttribute(pos,i).normalize();if(tmpV.dot(dir)>c.c13)ix.push(i)}c.idx=ix}
+ c.dep=Math.min(MAXD,c.dep+dt*rate);c.heat=1;c.dirty=true}
+function refresh(P,c){const pos=P.geo.attributes.position,col=P.geo.attributes.color,d=V(0,0,0);for(const i of c.idx){d.fromBufferAttribute(pos,i).normalize();const n=nval(P,d),r=P.R+P.amp*(n-.5)-dent(P,d);pos.setXYZ(i,d.x*r,d.y*r,d.z*r);
+  colorAt(P,n,d,BC);let hf=0,sc=0;for(const k of P.cr){const cs=d.dot(k.d);if(cs<k.c13)continue;const t=Math.acos(Math.min(1,cs))/k.rad;sc=Math.max(sc,Math.max(0,1.3-t)/1.3);hf=Math.max(hf,k.heat*Math.max(0,1-t*t))}
+  BC.multiplyScalar(1-.8*sc);GL.setRGB(1.7*hf,.42*hf*hf,.06*hf*hf*hf);BC.multiplyScalar(1-hf*.8).add(GL);col.setXYZ(i,BC.r,BC.g,BC.b)}pos.needsUpdate=true;col.needsUpdate=true}
+function updCraters(dt){for(const pl of planets){const P=pl.P;for(const c of P.cr){const hot=c.dirty;c.dirty=false;if(!hot)c.heat=Math.max(0,c.heat-dt/50);if(hot||c.heat>0||c.need){refresh(P,c);c.need=c.heat>0}
+  c.sp.position.copy(pl.c).addScaledVector(c.d,P.R+hOf(P,c.d)+3);c.sp.material.opacity=Math.min(.75,c.heat);c.sp.visible=c.heat>.02}}
+ if(mode==='walk'&&W.grounded){const pl=nearest(W.pos)[0],u=_a.copy(W.pos).sub(pl.c).normalize();for(const c of pl.P.cr){const t=Math.acos(Math.min(1,u.dot(c.d)))/c.rad;if(t<1&&c.heat>.15)hurt(c.heat*(1-t*t)*14*dt,'molten rock')}}}
+const sparks=(()=>{const N=160,pos=new Float32Array(N*3).fill(1e7),vel=new Float32Array(N*3),life=new Float32Array(N),g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(pos,3));
+ const o=new T.Points(g,new T.PointsMaterial({color:0xffb050,size:6,map:glowTex,sizeAttenuation:false,transparent:true,blending:T.AdditiveBlending,depthWrite:false,fog:false}));o.frustumCulled=false;scene.add(o);let k=0;
+ return{emit(p,n,u,sp){for(let j=0;j<n;j++){const i=k++%N;pos[i*3]=p.x;pos[i*3+1]=p.y;pos[i*3+2]=p.z;vel[i*3]=u.x*sp*(.4+Math.random())+(Math.random()-.5)*sp;vel[i*3+1]=u.y*sp*(.4+Math.random())+(Math.random()-.5)*sp;vel[i*3+2]=u.z*sp*(.4+Math.random())+(Math.random()-.5)*sp;life[i]=.5+Math.random()*.7}},
+  step(dt){for(let i=0;i<N;i++){if(life[i]<=0){pos[i*3]=1e7;continue}life[i]-=dt;for(let a=0;a<3;a++)pos[i*3+a]+=vel[i*3+a]*dt}g.attributes.position.needsUpdate=true}}})();
+const vc=new T.Mesh(vb.geometry,new T.MeshBasicMaterial({color:0xffffff,blending:T.AdditiveBlending,fog:false,transparent:true,depthWrite:false})),vf=spr(0xffffff,10),il=new T.PointLight(0xff6a20,0,160,1);vc.visible=vf.visible=false;scene.add(vc,vf,il);
+function footPowers(dt,T0){force=Math.min(1,force+dt*(rHeld||keys.KeyQ?0:.25));let eye=false,ill=0;const pl=nearest(W.pos)[0],up=W.pos.clone().sub(pl.c).normalize();
+ if(lHeld&&!ov){heat+=dt*.55;if(heat>=1){ov=true;msg('Eyes overheated!')}aim(0);AO.copy(W.pos).addScaledVector(W.face,.5).addScaledVector(up,.9);AD.copy(AP).sub(AO).normalize();
+  let len=Math.min(700,AP.distanceTo(AO)),tgt=null;if(MET){const w=_c.copy(MET.pos).sub(AO),s=w.dot(AD);if(s>0&&s<6000&&w.addScaledVector(AD,-s).length()<MET.mR*1.8){len=s;splitMet()}}
+  for(const t of T0){const w=_c.copy(t.pos).sub(AO),s=w.dot(AD);if(s<0||s>len)continue;if(w.addScaledVector(AD,-s).length()<t.r+1.5){len=s;tgt=t}}
+  if(tgt)tgt.hit(dt*16);const gt=rayGround(pl,AO,AD,len);if(gt>0&&gt<len){len=gt;tgt=null}
+  const w=1+.25*Math.sin(performance.now()*.05)+Math.random()*.15,end=_a.copy(AO).addScaledVector(AD,len);
+  vb.position.copy(AO);vb.quaternion.setFromUnitVectors(Z,AD);vb.scale.set(7*w,7*w,len);vb.visible=true;vc.position.copy(AO);vc.quaternion.copy(vb.quaternion);vc.scale.set(2.6*w,2.6*w,len);vc.visible=true;
+  vs.position.copy(end);vs.scale.setScalar(40*w);vs.visible=true;vf.position.copy(AO);vf.scale.setScalar(14*w);vf.visible=true;il.position.copy(end);il.intensity=4+Math.random()*3;
+  if(!tgt&&gt>0){const dir=_b.copy(end).sub(pl.c).normalize();melt(pl,dir,dt,32);sparks.emit(end,6,dir,26)}else if(tgt)sparks.emit(end,3,AD.clone().negate(),20);
+  shake=Math.max(shake,.5);if(Math.random()<.2)beep(45+Math.random()*30,.12);eye=true}
+ if(!eye){vb.visible=vs.visible=vc.visible=vf.visible=false;il.intensity=0}
+ bolts.forEach(b=>b.visible=false);
+ if((rHeld||keys.KeyQ)&&force>.02){aim(0);AO.copy(W.pos).addScaledVector(W.face,.8).addScaledVector(up,.5);AD.copy(AP).sub(AO).normalize();
+  const cand=T0.filter(t=>{const w=_c.copy(t.pos).sub(cam.position),s=w.dot(AD2);if(s<3||t.pos.distanceTo(W.pos)>230)return false;return w.addScaledVector(AD2,-s).length()<t.r+7+s*.09}).sort((a,b)=>a.pos.distanceTo(cam.position)-b.pos.distanceTo(cam.position)),hits=cand.slice(0,1);
+  if(hits.length)for(const t of T0)if(t!==hits[0]&&hits.length<3&&t.pos.distanceTo(hits[0].pos)<70)hits.push(t);
+  force-=dt*(hits.length?.35:.12);
+  if(!hits.length){const gt=rayGround(pl,AO,AD,160),end=gt>0?_a.copy(AO).addScaledVector(AD,gt):_a.copy(AO).addScaledVector(AD,60);[0,1,2].forEach(k=>bolt(bolts[k],AO,end,1+k*1.5));if(gt>0){const dir=_b.copy(end).sub(pl.c).normalize();melt(pl,dir,dt,9);sparks.emit(end,4,dir,22);il.position.copy(end);ill=5}}
+  hits.forEach((t,i)=>{[0,1,2].forEach(k=>bolt(bolts[i*3+k],i?hits[0].pos:AO,t.pos,1+k*1.5));t.hit(dt*(t.person?1.5:t.k?6:12));if(t.person||t.k)t.zap=true;il.position.copy(t.pos);ill=6;sparks.emit(t.pos,2,up,18)});
+  if(Math.random()<.4)beep(150+Math.random()*600,.04);shake=Math.max(shake,.35)}
+ if(!eye)il.intensity=ill*(.6+Math.random()*.8);sparks.step(dt)}
+let MET=null,cine=null,metG=null;const FXL=[],trailN=500,trP=new Float32Array(trailN*3).fill(1e7),trC=new Float32Array(trailN*3),trV=new Float32Array(trailN*3),trL=new Float32Array(trailN),trA=new Float32Array(trailN);let trK=0;
+const trG=new T.BufferGeometry();trG.setAttribute('position',new T.BufferAttribute(trP,3));trG.setAttribute('color',new T.BufferAttribute(trC,3));
+const trM=new T.PointsMaterial({size:60,map:glowTex,vertexColors:true,transparent:true,blending:T.AdditiveBlending,depthWrite:false,fog:false,sizeAttenuation:true}),trO=new T.Points(trG,trM);trO.frustumCulled=false;scene.add(trO);
+function trailEmit(p,b,mR,n,sp){for(let j=0;j<n;j++){const i=trK++%trailN,r=Math.random()*mR;trP[i*3]=p.x+b.x*r+(Math.random()-.5)*mR*1.4;trP[i*3+1]=p.y+b.y*r+(Math.random()-.5)*mR*1.4;trP[i*3+2]=p.z+b.z*r+(Math.random()-.5)*mR*1.4;
+  const s=sp*(.2+Math.random()*.3);trV[i*3]=b.x*s+(Math.random()-.5)*mR*.4;trV[i*3+1]=b.y*s+(Math.random()-.5)*mR*.4;trV[i*3+2]=b.z*s+(Math.random()-.5)*mR*.4;trL[i]=trA[i]=1.5+Math.random()*2.5}}
+function updFx(dt){for(let i=0;i<trailN;i++){if(trL[i]<=0){trP[i*3]=1e7;continue}trL[i]-=dt;const a=1-trL[i]/trA[i],f=Math.max(0,1-a);for(let k=0;k<3;k++)trP[i*3+k]+=trV[i*3+k]*dt;trC[i*3]=f*(1-.55*a);trC[i*3+1]=f*(.75-.7*a)*.9;trC[i*3+2]=f*.25*(1-a)}
+ trG.attributes.position.needsUpdate=trG.attributes.color.needsUpdate=true;
+ for(let i=FXL.length-1;i>=0;i--){const f=FXL[i];f.t+=dt;const a=Math.min(1,f.t/f.max);f.upd(f,a,dt);if(f.t>=f.max){scene.remove(f.o);FXL.splice(i,1)}}}
+function buildMet(){const g=new T.IcosahedronGeometry(1,26),p=g.attributes.position,col=new Float32Array(p.count*3),d=V(0,0,0),c=new T.Color(),c2=new T.Color(0x7a6a58);
+ for(let i=0;i<p.count;i++){d.fromBufferAttribute(p,i).normalize();const n=vn(d.x*2.2,d.y*2.2,d.z*2.2,3)*.55+vn(d.x*5,d.y*5,d.z*5,4)*.3+vn(d.x*13,d.y*13,d.z*13,5)*.15,cr=1-Math.abs(2*vn(d.x*6,d.y*6,d.z*6,9)-1),r=1+.34*(n-.5)-.1*Math.max(0,cr-.82)*5;p.setXYZ(i,d.x*r,d.y*r,d.z*r);c.setHex(0x2a2420).lerp(c2,n);if(cr>.94)c.setHex(0xc89a60);c.multiplyScalar(.8+.4*h3(i,3,7,1));col.set([c.r,c.g,c.b],i*3)}
+ g.setAttribute('color',new T.BufferAttribute(col,3));g.computeVertexNormals();
+ const rm=new T.MeshStandardMaterial({vertexColors:true,flatShading:true,roughness:.95,metalness:.3,emissive:0xff4a10,emissiveIntensity:0});inject(rm,'float dn=nz(vP*3.)*.5+nz(vP*9.)*.3+nz(vP*27.)*.2;diffuseColor.rgb*=.6+.8*dn;',BUMP);
+ const grp=new T.Group(),rock=new T.Mesh(g,rm),sm=new T.MeshBasicMaterial({color:0xff7a20,transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,fog:false});inject(sm,'diffuseColor.a*=.3+.9*nz(vP*5.);');
+ const shell=new T.Mesh(new T.SphereGeometry(1.08,32,24),sm),co=n=>new T.MeshBasicMaterial({color:n,transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,fog:false,side:T.DoubleSide});
+ const c1=new T.Mesh(new T.ConeGeometry(1.15,9,28,1,true).translate(0,4.5,0),co(0xff6a18)),k2=new T.Mesh(new T.ConeGeometry(1.8,16,28,1,true).translate(0,8,0),co(0xff3a08)),gl=spr(0xff8a30,10),lt=new T.PointLight(0xff7a30,0,9000,1);
+ grp.add(rock,shell,c1,k2,gl,lt);grp.userData={rock,shell,c1,c2:k2,gl,lt,rm,sm};scene.add(grp);return grp}
+function summon(){if(!running)return;if(MET||cine||FR.length){msg('A meteor is already in motion',1500);return}
+ cam.updateMatrixWorld();RC.setFromCamera({x:0,y:.2},cam);const o=cam.position.clone(),d=RC.ray.direction.clone();let pl=null,iw=null;
+ const np=nearest(o)[0],gt=rayGround(np,o,d,5000);if(gt>0){pl=np;iw=o.clone().addScaledVector(d,gt)}
+ else{let bt=1e12;for(const q of planets){const oc=o.clone().sub(q.c),b=oc.dot(d),c=oc.lengthSq()-q.P.R*q.P.R,h=b*b-c;if(h<0)continue;const t=-b-Math.sqrt(h);if(t>0&&t<bt){bt=t;pl=q;iw=o.clone().addScaledVector(d,t)}}}
+ if(!pl){msg('Aim the reticle at a planet, then press Z',2000);return}
+ const P=pl.P,dir=iw.clone().sub(pl.c).normalize(),mR=P.R*(.15+Math.random()*.05),ir=P.R+hOf(P,dir),tan=V(0,1,0).cross(dir);if(tan.lengthSq()<.01)tan.set(1,0,0).cross(dir);tan.normalize();
+ const appr=dir.clone().multiplyScalar(Math.cos(.6)).addScaledVector(tan,Math.sin(.6));
+ metG=metG||buildMet();metG.visible=true;trM.size=mR*.9;
+ MET={pl,dir,mR,ir,u:0,L:36*mR,appr,relI:dir.clone().multiplyScalar(ir),rel:V(0,0,0),pos:V(0,0,0)};cine={pl,dir,ir,sd:tan,t:0};$('lb').style.display='block';
+ msg('METEOR INBOUND on '+P.name+' — '+Math.round(mR*2)+' m wide. Cinematic for 2 s, then fly after it in your ship (F to board)!',4500)}
+function updMeteor(dt){updFx(dt);const m=MET;if(!m)return;const P=m.pl.P,mR=m.mR,sl=m.u>.86?.4:1;m.u=Math.min(1,m.u+dt/40*sl);
+ m.rel.copy(m.relI).addScaledVector(m.appr,m.L*(1-m.u));m.pos.copy(m.pl.c).add(m.rel);crush(m.pos,mR*1.05,m.pl);
+ const alt=m.rel.length()-P.R,heat=clamp(1-alt/(P.R*.32),0,1)*(P.atm?1:.3)+.06,u=metG.userData,bk=_b.copy(m.appr);
+ metG.position.copy(m.pos);u.rock.scale.setScalar(mR);u.rock.rotation.y+=dt*.12;u.rock.rotation.x+=dt*.05;u.rm.emissiveIntensity=heat*1.6;u.shell.scale.setScalar(mR);u.sm.opacity=Math.min(.9,heat*.9);
+ u.c1.scale.setScalar(mR);u.c2.scale.setScalar(mR);u.c1.quaternion.setFromUnitVectors(Zy,bk);u.c2.quaternion.copy(u.c1.quaternion);u.c1.material.opacity=heat*.5;u.c2.material.opacity=heat*.28;
+ u.gl.scale.setScalar(mR*(5+9*heat));u.gl.material.opacity=.4+heat*.6;u.lt.intensity=heat*10;
+ trailEmit(m.pos,bk,mR,Math.floor((300*heat+20)*dt*(1+Math.random())),m.L/40*1.2);
+ const dn=_a.copy(m.rel).normalize();if(m.u>=1||m.rel.length()<P.R+hOf(P,dn)+mR*.6)impact()}
+function impact(){const m=MET,P=m.pl.P,mR=m.mR,iw=m.pl.c.clone().addScaledVector(m.dir,m.ir),dir=m.dir;MET=null;metG.visible=false;metG.userData.lt.intensity=0;
+ const q=clamp(mR/(P.R*.12),.12,1);if(q>=.2){const big=(mR*2.4)/P.R;for(const c of P.cr)if(dir.dot(c.d)>Math.cos(big))scene.remove(c.sp);P.cr=P.cr.filter(c=>dir.dot(c.d)<=Math.cos(big));melt(m.pl,dir.clone(),0,0,mR*2.4);const cc=P.cr[P.cr.length-1];if(cc){cc.dep=Math.min(P.R*.25,mR*1.3);cc.heat=1;cc.dirty=true}}
+ const add=(o,max,upd)=>{scene.add(o);FXL.push({o,t:0,max,upd})},mkS=(c,s)=>{const o=spr(c,s);o.position.copy(iw);return o};
+ add(mkS(0xffffff,mR*30),1.4,(f,a)=>{f.o.material.opacity=1-a;f.o.scale.setScalar(mR*(30+20*a))});
+ add(mkS(0xff7a20,mR*12),5,(f,a)=>{f.o.material.opacity=(1-a)*.9;f.o.scale.setScalar(mR*(12+16*a));f.o.position.copy(iw).addScaledVector(dir,mR*4*a)});
+ const sh=new T.Mesh(new T.SphereGeometry(1,40,28),new T.MeshBasicMaterial({color:0xffc890,transparent:true,opacity:.5,blending:T.AdditiveBlending,depthWrite:false,fog:false,side:T.DoubleSide}));sh.position.copy(iw);
+ if(q>.25)add(sh,7,(f,a)=>{f.o.scale.setScalar(mR+(P.R*1.7-mR)*Math.pow(a,.7));f.o.material.opacity=.55*(1-a)});
+ if(q>.5){const il2=new T.PointLight(0xffa050,60,20000,1);il2.position.copy(iw).addScaledVector(dir,mR*3);add(il2,4,(f,a)=>{f.o.intensity=60*(1-a)*(1-a)})}
+ add(new T.Object3D(),7,(f,a)=>{shake=Math.max(shake,1.4*(1-a))});
+ for(let i=0,nD=Math.ceil(30*q);i<nD;i++){const o=spr(0x6a5646,mR*3);o.material.blending=T.NormalBlending;o.position.copy(iw);const tv=V(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize();tv.addScaledVector(dir,-tv.dot(dir)).normalize().multiplyScalar(mR*(.15+Math.random()*.35));
+  add(o,10,(f,a,dt)=>{f.o.position.addScaledVector(tv,dt).addScaledVector(dir,mR*.12*dt);f.o.scale.setScalar(mR*(3+10*a));f.o.material.opacity=.65*(1-a)})}
+ const dg=new T.DodecahedronGeometry(1,0),dm=new T.MeshStandardMaterial({color:0x5a4a3c,flatShading:true,roughness:1});
+ for(let i=0,nB=Math.ceil(40*q);i<nB;i++){const o=new T.Mesh(dg,dm),tv=V(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize();tv.addScaledVector(dir,-tv.dot(dir)).normalize();
+  const vel=dir.clone().multiplyScalar(mR*(.5+Math.random()*1.2)).addScaledVector(tv,mR*(.5+Math.random()*1.6));o.scale.setScalar(mR*(.03+Math.random()*.1));o.position.copy(iw);
+  add(o,16,(f,a,dt)=>{vel.addScaledVector(_d.copy(f.o.position).sub(m.pl.c).normalize(),-P.g*dt);f.o.position.addScaledVector(vel,dt);f.o.rotation.x+=dt;f.o.rotation.y+=dt*.7;const rr=_d.copy(f.o.position).sub(m.pl.c),l2=rr.length(),gg=P.R+hOf(P,rr.divideScalar(l2));if(l2<gg){f.o.position.copy(m.pl.c).addScaledVector(rr,gg);vel.set(0,0,0)}})}
+ for(const t of tgts())if(t.pos.distanceTo(iw)<mR*14)t.hit(1e4);
+ if(mode==='walk'){const dd=W.pos.distanceTo(iw);if(dd<mR*18)hurt(130*(1-dd/(mR*18)),'meteor impact')}
+ shake=Math.max(shake,2*q);if(q>.5){[0,350,800].forEach(t=>setTimeout(()=>beep(28+Math.random()*10,.9),t));msg('IMPACT on '+P.name+'!',3000)}}
+const FR=[],fxAdd=(o,max,upd)=>{scene.add(o);FXL.push({o,t:0,max,upd})};
+function fragGroup(){const u0=metG.userData,g=new T.Group(),rm=new T.MeshStandardMaterial({vertexColors:true,flatShading:true,roughness:.95,metalness:.3,emissive:0xff4a10,emissiveIntensity:0});inject(rm,'float dn=nz(vP*3.)*.5+nz(vP*9.)*.3+nz(vP*27.)*.2;diffuseColor.rgb*=.6+.8*dn;',BUMP);
+ const rock=new T.Mesh(u0.rock.geometry,rm),sm=new T.MeshBasicMaterial({color:0xff7a20,transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,fog:false});inject(sm,'diffuseColor.a*=.3+.9*nz(vP*5.);');
+ const shell=new T.Mesh(u0.shell.geometry,sm),co=n=>new T.MeshBasicMaterial({color:n,transparent:true,opacity:0,blending:T.AdditiveBlending,depthWrite:false,fog:false,side:T.DoubleSide}),c1=new T.Mesh(u0.c1.geometry,co(0xff6a18)),c2=new T.Mesh(u0.c2.geometry,co(0xff3a08)),gl=spr(0xff8a30,10),lt=FR.length<6?new T.PointLight(0xff7a30,0,5000,1):new T.Object3D();
+ g.add(rock,shell,c1,c2,gl,lt);g.userData={rock,shell,c1,c2,gl,lt,rm,sm};scene.add(g);return g}
+function splitMet(){const m=MET;if(!m)return;MET=null;metG.visible=false;metG.userData.lt.intensity=0;const P=m.pl.P,e1=V(0,1,0).cross(m.dir);if(e1.lengthSq()<.01)e1.set(1,0,0).cross(m.dir);e1.normalize();const e2=m.dir.clone().cross(e1);
+ for(let k=0;k<5;k++){const az=k*1.2566+Math.random()*.4,t=e1.clone().multiplyScalar(Math.cos(az)).addScaledVector(e2,Math.sin(az)),ax=m.dir.clone().cross(t).normalize(),dk=m.dir.clone().applyAxisAngle(ax,.42+Math.random()*.2),ri=dk.clone().multiplyScalar(P.R+hOf(P,dk));
+  FR.push({g:fragGroup(),pl:m.pl,mR:m.mR*.42,depth:1,rs:m.rel.clone(),dv:ri.clone().sub(m.rel),relI:ri,u:0,dur:Math.max(6,(1-m.u)*40*.9),rel:V(0,0,0),pos:V(0,0,0)})}
+ shake=Math.max(shake,1.8);boom(m.pos,m.mR*2);beep(70,.7);msg('THE METEOR SPLIT INTO 5 FRAGMENTS!',3500)}
+function updFrag(dt){for(let i=FR.length-1;i>=0;i--){const f=FR[i],P=f.pl.P,sl=f.u>.86?.5:1;f.u=Math.min(1,f.u+dt/f.dur*sl);f.rel.copy(f.rs).addScaledVector(f.dv,f.u);f.pos.copy(f.pl.c).add(f.rel);crush(f.pos,f.mR*1.05,f.pl);
+  const alt=f.rel.length()-P.R,heat=clamp(1-alt/(P.R*.32),0,1)*(P.atm?1:.3)+.1,u=f.g.userData,bk=_b.copy(f.dv).normalize().negate(),mR=f.mR;
+  f.g.position.copy(f.pos);u.rock.scale.setScalar(mR);u.rock.rotation.y+=dt*.3;u.rm.emissiveIntensity=heat*1.6;u.shell.scale.setScalar(mR);u.sm.opacity=Math.min(.9,heat*.9);
+  u.c1.scale.setScalar(mR);u.c2.scale.setScalar(mR);u.c1.quaternion.setFromUnitVectors(Zy,bk);u.c2.quaternion.copy(u.c1.quaternion);u.c1.material.opacity=heat*.5;u.c2.material.opacity=heat*.28;
+  u.gl.scale.setScalar(mR*(5+9*heat));u.gl.material.opacity=.4+heat*.6;u.lt.intensity=heat*6;
+  trailEmit(f.pos,bk,mR,Math.floor((200*heat+10)*dt*(1+Math.random())),f.dv.length()/f.dur*1.2);
+  const dn=_a.copy(f.rel).normalize();if(f.u>=1||f.rel.length()<P.R+hOf(P,dn)+mR*.6){FR.splice(i,1);f.g.visible=false;u.lt.intensity=0;MET={pl:f.pl,dir:f.relI.clone().normalize(),mR:mR*1.25,ir:f.relI.length()};impact();
+   if(!FR.length){const pl=f.pl;setTimeout(()=>planetOutcome(pl),1800)}}}}
+function planetOutcome(pl){if(!planets.includes(pl))return;const P=pl.P,c=pl.c.clone(),half=Math.random()<.5,grp=scene.children.find(o=>o.position===pl.c);
+ [drones,viruses,people,enemies,sims].forEach(a=>a.forEach(t=>{if(t.pl===pl||t.pos.distanceTo(c)<P.R*1.3){if(!t.dead)t.hit(1e5);t.rt=1e12;t.dead=true;t.m.visible=false}}));
+ structs.forEach(s=>{if(s.pl===pl)s.g.visible=false});for(let i=beacons.length-1;i>=0;i--)if(beacons[i].pl===pl){beacons[i].g.visible=false;beacons.splice(i,1)}
+ P.cr.forEach(k=>scene.remove(k.sp));(pl.sats||[]).forEach(s=>scene.remove(s.g));if(pl.glow)scene.remove(pl.glow);const lost=ship.pos.distanceTo(c)<P.R*1.6||(mode==='walk'&&W.pos.distanceTo(c)<P.R*1.6);
+ if(grp)grp.visible=false;pl.el.style.display='none';planets.splice(planets.indexOf(pl),1);if(target>=planets.length)target=0;if(pl===cyto)cyto.dc.set(0,0,0);if(lost){respawn();hp=100}
+ const S=(col,sz)=>{const o=spr(col,sz);o.position.copy(c);return o},ax=V(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize(),rock=new T.MeshStandardMaterial({color:P.pal[2][2],flatShading:true,roughness:1});inject(rock,'diffuseColor.rgb*=.55+.9*(nz(vP*.02)*.6+nz(vP*.09)*.4);');
+ fxAdd(S(0xffffff,P.R*12),2,(f,a)=>{f.o.material.opacity=1-a});fxAdd(S(0xff9a40,P.R*3),12,(f,a)=>{f.o.material.opacity=1-a;f.o.scale.setScalar(P.R*(3+7*a))});
+ const sh=new T.Mesh(new T.SphereGeometry(1,48,32),new T.MeshBasicMaterial({color:0xffc890,transparent:true,opacity:.5,blending:T.AdditiveBlending,depthWrite:false,fog:false,side:T.DoubleSide}));sh.position.copy(c);fxAdd(sh,12,(f,a)=>{f.o.scale.setScalar(P.R*(1+4*Math.pow(a,.6)));f.o.material.opacity=.5*(1-a)});
+ const lg=new T.PointLight(0xffb060,200,80000,1);lg.position.copy(c);fxAdd(lg,6,(f,a)=>{f.o.intensity=200*(1-a)*(1-a)});fxAdd(new T.Object3D(),10,(f,a)=>{shake=Math.max(shake,2.2*(1-a))});
+ if(half){for(const sg of[1,-1]){const h=new T.Group();h.add(new T.Mesh(new T.SphereGeometry(P.R,56,40,0,6.283,0,1.5708),rock),new T.Mesh(new T.CircleGeometry(P.R,48).rotateX(Math.PI/2),new T.MeshBasicMaterial({color:0xff6a20,side:T.DoubleSide,fog:false})));h.position.copy(c);h.quaternion.setFromUnitVectors(Zy,ax.clone().multiplyScalar(sg));
+  fxAdd(h,18,(f,a,dt)=>{f.o.position.addScaledVector(ax,sg*P.R*.05*dt*(1+a*3));f.o.rotateX(dt*.05*sg);f.o.scale.setScalar(Math.max(.01,1-Math.pow(a,4)))})}}
+ else{const ig=new T.IcosahedronGeometry(1,1);for(let i=0;i<70;i++){const o=new T.Mesh(ig,new T.MeshStandardMaterial({color:P.pal[Math.floor(Math.random()*P.pal.length)][2],flatShading:true,roughness:1,emissive:0x5a1a00,emissiveIntensity:.6})),v=V(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize().multiplyScalar(P.R*(.04+Math.random()*.2)),rv=V(Math.random(),Math.random(),Math.random()).multiplyScalar(.6);
+  o.scale.setScalar(P.R*(.04+Math.random()*.16));o.position.copy(c).addScaledVector(v,3);
+  fxAdd(o,18,(f,a,dt)=>{f.o.position.addScaledVector(v,dt*(1+a));f.o.rotation.x+=rv.x*dt;f.o.rotation.y+=rv.y*dt;f.o.rotation.z+=rv.z*dt;f.o.material.emissiveIntensity=.6*(1-a)})}}
+ [0,400,900,1500].forEach(t=>setTimeout(()=>beep(24+Math.random()*10,1),t));msg((half?'THE PLANET SPLIT IN HALF':'THE PLANET WAS SHATTERED')+' — '+P.name+' is destroyed!',6000)}
+const YPS=[1,10,100,1000],ERA=['Primordial microbes','Flora','Fauna','Tribal humans','Agrarian','Industrial — solar power','Space age — satellites'],NEED=[300,400,500,600,500,400],E0={Verdara:5,Rustfall:4,Tidewater:4,Gigantus:4,Rosette:3,Sulfura:3,Cobalt:3,Pebble:3,Glaciera:3,Myconia:2,Umbra:2,Crystara:1,Ember:1,Cytosa:0},HAB={Verdara:1.4,Tidewater:1.3,Rosette:1.2,Myconia:1.2,Cytosa:1.5,Rustfall:.8,Gigantus:.7,Sulfura:.8,Pebble:1,Cobalt:.8,Glaciera:.6,Umbra:.7,Crystara:.5,Ember:.4};
+let year=0,yi=0;const fauna=[],panels=[],X1=V(1,0,0),Y1=V(0,1,0),PNG=new T.BoxGeometry(7,.3,5),PNM=new T.MeshStandardMaterial({color:0x1a3a8a,emissive:0x0a2060,metalness:.6,roughness:.3});
+function mkAnimal(pl,i){const P=pl.P,g=new T.Group(),mt=new T.MeshStandardMaterial({color:(P.pal[1+(i%3)]||P.pal[0])[2],flatShading:true,roughness:.9}),sc=(i%3===0?1.8:1)*(P.R>400?1.3:1),add=(geo,x,y,z)=>{const o=new T.Mesh(geo,mt);o.position.set(x,y,z);g.add(o)};
+ add(new T.SphereGeometry(.7,8,6).scale(1.5,.9,.8),0,.9,0);add(new T.SphereGeometry(.38,8,6),.95,1.25,0);[[-.5,-.3],[-.5,.3],[.5,-.3],[.5,.3]].forEach(([x,z])=>add(new T.CylinderGeometry(.09,.09,.8,5),x,.4,z));g.scale.setScalar(sc);scene.add(g);
+ return{m:g,pl,dir:rotD(pl.sd,(60+Math.random()*200)/P.R),ax:V(1,0,0),wt:0,fwd:V(0,0,-1)}}
+function addSat(pl){const g=new T.Group(),m=new T.MeshStandardMaterial({color:0xcfd6e4,metalness:.6,roughness:.4}),sp=new T.MeshStandardMaterial({color:0x1a3a8a,emissive:0x0a1a4a,metalness:.5,roughness:.3});
+ g.add(new T.Mesh(new T.BoxGeometry(2,2,2),m));[-1,1].forEach(s=>{const w=new T.Mesh(new T.BoxGeometry(5,.1,2),sp);w.position.x=s*3.6;g.add(w)});const d=new T.Mesh(new T.SphereGeometry(1,8,6,0,6.283,0,1.5),m);d.position.y=1.4;g.add(d);const b=spr(0xff4040,8);b.position.y=1.6;g.add(b);g.scale.setScalar(Math.max(2,pl.P.R*.012));scene.add(g);
+ pl.sats.push({g,a:Math.random()*6.28,inc:Math.random()*1.4,asc:Math.random()*6.28,r:pl.P.R*(1.35+pl.sats.length*.08),w:.35/(1+pl.sats.length*.3),b})}
+function applyEra(pl,ann){const e=pl.era;for(const s of sims)if(s.pl===pl){if(e<3){s.dead=true;s.rt=1e12;s.m.visible=false}else if(s.rt>=1e11){s.dead=false;s.rt=0;s.hp=4;s.m.visible=true}}
+ structs.forEach(s=>{if(s.pl===pl)s.g.visible=e>=3&&!s.destroyed});if(ann&&nearest(cam.position)[0]===pl)msg(pl.P.name+' has entered the '+ERA[e]+' era!',5000)}
+planets.forEach(pl=>{const P=pl.P,r=rng(P.seed*3),grp=scene.children.find(o=>o.position===pl.c);pl.era=E0[P.name];pl.prog=r()*.6;pl.hab=HAB[P.name];pl.sats=[];pl.xt=0;pl.tech=0;pl.energy=0;pl.props=grp.children.find(o=>o.isInstancedMesh);pl.pn=pl.props.count;
+ pl.mic=[0,1,2].map(k=>new T.Color().setHSL((P.seed*.137+k*.33)%1,.9,.6));pl.mn=[['Bacillus','Vibrio','Coccus'][P.seed%3]+' '+P.name.slice(0,4).toLowerCase(),['Phage','Rhino','Corona'][P.seed%3]+'-'+P.name.slice(0,3),['Amoeba','Euglena','Paramecium'][P.seed%3]+' '+P.name.slice(0,3).toLowerCase()];
+ for(let i=0;i<28;i++){const d=rotD(pl.sd,(135+(i%7)*13)/P.R),g=new T.Mesh(PNG,PNM);g.position.copy(pl.c).addScaledVector(d,gM(pl,d)+1.2);scene.add(g);panels.push({g,pl,dir:d,off:g.position.clone().sub(pl.c),i})}
+ for(let i=0;i<6;i++)fauna.push(mkAnimal(pl,i))});
+planets.forEach(pl=>applyEra(pl,false));
+function updFauna(dt){for(const f of fauna){const pl=f.pl,P=pl.P;if(pl.era<2||!planets.includes(pl)){f.m.visible=false;continue}f.m.visible=true;if(pl.c.distanceTo(cam.position)>P.R*3)continue;
+ f.wt-=dt;if(f.wt<=0){f.wt=3+Math.random()*4;f.ax.set(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize()}let ax=f.ax,sp=1.5;
+ if(mode==='walk'&&W.pos.distanceTo(f.m.position)<35){const pd=_a.copy(W.pos).sub(pl.c).normalize();ax=_b.crossVectors(pd,f.dir).normalize();sp=7}
+ f.dir.applyAxisAngle(ax,sp*dt/P.R).normalize();f.fwd.copy(_c.crossVectors(ax,f.dir)).normalize();
+ f.m.position.copy(pl.c).addScaledVector(f.dir,gM(pl,f.dir)+.1);_m.makeBasis(f.fwd,f.dir,_d.crossVectors(f.fwd,f.dir));f.m.quaternion.setFromRotationMatrix(_m)}}
+const micN=700,micP=new Float32Array(micN*3),micL=new Float32Array(micN*3),micC=new Float32Array(micN*3),micG=new T.BufferGeometry();micG.setAttribute('position',new T.BufferAttribute(micP,3));micG.setAttribute('color',new T.BufferAttribute(micC,3));for(let i=0;i<micN*3;i++)micL[i]=(Math.random()-.5)*60;
+const micO=new T.Points(micG,new T.PointsMaterial({size:6,map:glowTex,vertexColors:true,transparent:true,opacity:.85,blending:T.AdditiveBlending,depthWrite:false,fog:false,sizeAttenuation:false}));micO.frustumCulled=false;micO.visible=false;scene.add(micO);let micT=0;
+function micro(dt,pos,pl){if(mode!=='walk'||pos.distanceTo(pl.c)-pl.P.R>40){micO.visible=false;return}micO.visible=true;micT+=dt;
+ const cols=pl.mic,up=_a.copy(pos).sub(pl.c).normalize(),rt=_b.crossVectors(up,Zn).normalize(),fw=_c.crossVectors(rt,up),dens=clamp((pl.era<=1?1:.45)*Math.min(1.3,pl.hab+.3),.2,1);micG.setDrawRange(0,Math.floor(micN*dens));
+ for(let i=0;i<micN;i++){const k=i%3,sp=[.5,4,1.6][k];let x=micL[i*3]+Math.sin(micT*.7+i)*sp*dt*(k===2?2:1),y=micL[i*3+1]+Math.cos(micT*.5+i*1.3)*sp*dt,z=micL[i*3+2]+Math.sin(micT*.9+i*.7)*sp*dt+(k===2?sp*dt:0);
+  if(z>30)z-=60;if(Math.abs(x)>30)x*=-.9;micL[i*3]=x;micL[i*3+1]=y;micL[i*3+2]=z;const yy=Math.abs(y)%25;
+  micP[i*3]=pos.x+rt.x*x+up.x*yy+fw.x*z;micP[i*3+1]=pos.y+rt.y*x+up.y*yy+fw.y*z;micP[i*3+2]=pos.z+rt.z*x+up.z*yy+fw.z*z;const c=cols[k];micC[i*3]=c.r;micC[i*3+1]=c.g;micC[i*3+2]=c.b}
+ micG.attributes.position.needsUpdate=micG.attributes.color.needsUpdate=true}
+function updEra(dt){const dy=dt*YPS[yi];year+=dy;updCity(dy);
+ for(const pl of planets){let e=pl.era;if(e<6){const boost=e>=5?1+.6*Math.min(1,pl.energy/30):1;pl.prog+=dy*pl.hab*boost/NEED[e];if(pl.prog>=1){pl.prog=0;pl.era=++e;applyEra(pl,true)}}else pl.xt+=dy;
+  pl.tech=e*100+pl.prog*100+pl.xt*.2;pl.props.count=Math.floor(pl.pn*(e<1?0:e===1?pl.prog:1));
+  const sd=_a.copy(pl.c).negate().normalize(),N=e>=6?28:e>=5?14:0;pl.energy=N*Math.max(0,pl.plaza.dot(sd))*1.1;
+  if(e>=6){const want=Math.max(0,Math.min(12,4+Math.floor(pl.xt/60))-Math.ceil(pl.satLost||0));pl.satLost=Math.max(0,(pl.satLost||0)-dy/60);while(pl.sats.length<want)addSat(pl)}
+  for(const s of pl.sats){s.a+=s.w*dt;_b.set(Math.cos(s.a)*s.r,0,Math.sin(s.a)*s.r).applyAxisAngle(X1,s.inc).applyAxisAngle(Y1,s.asc);s.g.position.copy(pl.c).add(_b);s.g.rotation.y+=dt*.5;s.b.visible=Math.floor(performance.now()/500)%2===0}}
+ for(const p of panels){const pl=p.pl;if(!planets.includes(pl)){p.g.visible=false;continue}if(p.destroyed&&(p.rb-=dy)<=0)p.destroyed=false;p.g.visible=!p.destroyed&&p.i<(pl.era>=6?28:pl.era>=5?14:0);if(!p.g.visible)continue;p.g.position.copy(pl.c).add(p.off);
+  if(pl.c.distanceTo(cam.position)>pl.P.R*3)continue;const sd=_a.copy(pl.c).negate().normalize(),f=_b.copy(sd).addScaledVector(p.dir,-sd.dot(p.dir));if(f.lengthSq()>1e-4){f.normalize();_c.crossVectors(f,p.dir);_d.copy(f).negate();_m.makeBasis(_c,p.dir,_d);p.g.quaternion.setFromRotationMatrix(_m);p.g.rotateX(-.5)}}}
+function civHud(pl,alt){let s='<br>Year '+Math.floor(year)+' ('+YPS[yi]+' yr/s · Y to change)';if(alt<pl.P.R*3)s+='<br>'+pl.P.name+': '+ERA[pl.era]+(pl.era<6?' '+Math.round(pl.prog*100)+'%':'')+' · tech '+Math.round(pl.tech)+' · solar '+Math.round(pl.energy)+' MW · satellites '+pl.sats.length+cityTxt(pl)+'<br>Microbes: '+pl.mn.join(', ');return s}
+const CUP=[0,50,140,280,500],CAP=[0,0,0,0,1,3,4],BGG={cyl:new T.CylinderGeometry(1,1,1,8),box:new T.BoxGeometry(1,1,1),cone:new T.ConeGeometry(1,1,6),sph:new T.SphereGeometry(1,8,6)};
+const winM=(()=>{const m=new T.MeshStandardMaterial({color:0x8fa4b8,metalness:.5,roughness:.35,flatShading:true});inject(m,'float w=step(.5,fract(vP.y*10.))*step(.45,fract((vP.x+vP.z)*6.));diffuseColor.rgb*=.55+.9*w;');return m})(),rfM=new T.MeshStandardMaterial({color:0x6a4a38,flatShading:true}),glM=new T.MeshStandardMaterial({color:0xaee8ff,emissive:0x40b0ff,emissiveIntensity:.8});
+function setLvl(b,l){while(b.g.children.length)b.g.remove(b.g.children[0]);const wm=b.wm,ad=(geo,m,sx,sy,sz,y)=>{const o=new T.Mesh(geo,m);o.scale.set(sx,sy,sz);o.position.y=y;b.g.add(o);return o};
+ if(l===0){ad(BGG.cyl,wm,2.6,2.4,2.6,1.2);ad(BGG.cone,rfM,3.4,2.4,3.4,3.6)}
+ else if(l===1){ad(BGG.box,wm,6,4,6,2);ad(BGG.cone,rfM,5.6,3,5.6,5.5).rotation.y=.785}
+ else if(l===2){ad(BGG.box,winM,8,14,8,7);ad(BGG.box,wm,9,1,9,14.5)}
+ else if(l===3){ad(BGG.box,winM,9,34,9,17);ad(BGG.box,wm,10,1.2,10,34.6);ad(BGG.cyl,wm,.3,8,.3,39)}
+ else{ad(BGG.box,winM,10,56,10,28);ad(BGG.cyl,wm,6.5,2,6.5,56);ad(BGG.sph,glM,2.5,2.5,2.5,60);ad(BGG.cyl,wm,.3,12,.3,66)}b.lvl=l}
+planets.forEach(pl=>{const P=pl.P,r=rng(P.seed*17),sd=pl.sd,t1=V(0,1,0).cross(sd);if(t1.lengthSq()<.01)t1.set(1,0,0).cross(sd);t1.normalize();const t2=sd.clone().cross(t1),wm=new T.MeshStandardMaterial({color:P.pal[2][2],flatShading:true,roughness:.9});pl.bld=[];pl.cy=pl.era>=3?(pl.era-3)*150+r()*100:0;
+ for(let i=0;i<24;i++){const ring=1+Math.floor(i/8),rad=(60+ring*45)/P.R,ph=(i%8)/8*6.283+ring*.4,dir=sd.clone().addScaledVector(t1,Math.cos(ph)*rad).addScaledVector(t2,Math.sin(ph)*rad).normalize(),g=new T.Group();
+  g.position.copy(pl.c).addScaledVector(dir,gM(pl,dir)-.3);g.quaternion.setFromUnitVectors(Zy,dir);scene.add(g);const s={g,pl,off:g.position.clone().sub(pl.c),bld:true},b={g,pl,s,slot:i,lvl:-1,age:Math.max(0,pl.cy-i*10),wm,on:false};structs.push(s);pl.bld.push(b)}
+ pl.glow=spr(0xffb050,P.R*.14);scene.add(pl.glow)});
+function bInfo(pl){let n=0,lv=0,nx=1e9;for(const b of pl.bld)if(b.on){n++;lv=Math.max(lv,b.lvl);if(b.lvl<CAP[pl.era])nx=Math.min(nx,CUP[b.lvl+1]-b.age)}return{n,lv,nx}}
+function cityTxt(pl){if(pl.era<3)return'<br>No city yet';const c=bInfo(pl);return'<br>City: '+c.n+' buildings · tallest L'+c.lv+(c.nx<1e8?' · next upgrade in '+Math.ceil(c.nx)+' yr':' · max for this era')}
+function updCity(dy){for(const pl of planets){const e=pl.era;if(e>=3)pl.cy+=dy;const unl=e>=3?Math.min(24,Math.floor(pl.cy/10)+3):0;
+ for(const b of pl.bld){if(b.s.destroyed&&(b.s.rb-=dy)<=0){b.s.destroyed=false;b.age=0;b.lvl=-1}const on=b.slot<unl&&!b.s.destroyed;b.on=on;if(e<3||!on){b.g.visible=false;continue}b.g.visible=true;b.age+=dy;let l=0;for(let k=1;k<=CAP[e];k++)if(b.age>=CUP[k])l=k;
+  if(l!==b.lvl){const up=b.lvl>=0;setLvl(b,l);if(up&&nearest(cam.position)[0]===pl&&cam.position.distanceTo(b.g.position)<400)boom(b.g.position,14)}}
+ const sd=_a.copy(pl.c).negate().normalize(),night=1-clamp(Math.max(0,pl.plaza.dot(sd))*2+.2,0,1);pl.glow.visible=e>=3;pl.glow.position.copy(pl.c).addScaledVector(pl.plaza,pl.P.R+hOf(pl.P,pl.plaza)+14);pl.glow.material.opacity=night*Math.min(1,unl/18)*.8}}
+function crush(pos,rad,pl){const P=pl.P;
+ for(const t of tgts())if(t.pos.distanceTo(pos)<rad+(t.r||2))t.hit(1e4);
+ for(const s of structs)if(!s.destroyed&&s.g.visible&&s.g.position.distanceTo(pos)<rad+10){s.destroyed=true;s.rb=80;s.g.visible=false;boom(s.g.position,Math.min(rad*2,50))}
+ for(const p of panels)if(!p.destroyed&&p.g.visible&&p.g.position.distanceTo(pos)<rad+6){p.destroyed=true;p.rb=60;p.g.visible=false}
+ for(const q of planets)for(let i=q.sats.length-1;i>=0;i--)if(q.sats[i].g.position.distanceTo(pos)<rad+6){scene.remove(q.sats[i].g);q.sats.splice(i,1);q.satLost=(q.satLost||0)+1}
+ if(pos.distanceTo(pl.c)<P.R+P.amp*.5+rad+40){const im=pl.props,a=im.instanceMatrix.array;let ch=false;for(let i=0;i<pl.pn;i++){if(a[i*16]===0&&a[i*16+5]===0)continue;_c.set(a[i*16+12],a[i*16+13],a[i*16+14]).add(pl.c);if(_c.distanceTo(pos)<rad+4){a.fill(0,i*16,i*16+16);ch=true}}if(ch)im.instanceMatrix.needsUpdate=true}
+ if(ship.pos.distanceTo(pos)<rad+4){msg('Your ship was obliterated by a meteor!',3000);respawn()}
+ if(mode==='walk'&&W.pos.distanceTo(pos)<rad+3)hurt(300,'meteor strike')}
+function splitFrag(f){if(f.depth>=5||FR.length+4>90)return false;const P=f.pl.P,dn=f.relI.clone().normalize(),e1=V(0,1,0).cross(dn);if(e1.lengthSq()<.01)e1.set(1,0,0).cross(dn);e1.normalize();const e2=dn.clone().cross(e1),rem=(1-f.u)*f.dur;
+ for(let k=0;k<5;k++){const az=k*1.2566+Math.random()*.5,t=e1.clone().multiplyScalar(Math.cos(az)).addScaledVector(e2,Math.sin(az)),ax=dn.clone().cross(t).normalize(),dk=dn.clone().applyAxisAngle(ax,.12+Math.random()*.18),ri=dk.clone().multiplyScalar(P.R+hOf(P,dk));
+  FR.push({g:fragGroup(),pl:f.pl,mR:f.mR*.5,depth:f.depth+1,rs:f.rel.clone(),dv:ri.clone().sub(f.rel),relI:ri,u:0,dur:Math.max(4,rem*.95),rel:f.rel.clone(),pos:f.pos.clone()})}
+ scene.remove(f.g);return true}
+function splitAll(){let n=0;const list=FR.slice();if(MET){splitMet();n++}for(const f of list){if(splitFrag(f)){FR.splice(FR.indexOf(f),1);n++}}
+ if(n){shake=Math.max(shake,1.5);beep(80,.5);msg('Split! '+FR.length+' bodies inbound',2000)}else msg('The pieces cannot split any further',1500)}
+function endCine(){cine=null;$('lb').style.display='none'}
+function cineCam(dt){const m=cine;if(!m)return;
+ if(MET){m.t+=dt;if(m.t>2){endCine();return}const u=_a.copy(MET.pos).sub(MET.pl.c).normalize(),tv=_b.copy(MET.appr).negate(),sd=_c.crossVectors(tv,u).normalize(),tp=_d.copy(MET.pos).addScaledVector(sd,MET.mR*6).addScaledVector(tv,-MET.mR*3.5).addScaledVector(u,MET.mR*1.8);
+  cam.position.lerp(tp,1-Math.exp(-2.5*dt));cam.up.copy(u);cam.lookAt(_a.copy(MET.pos).addScaledVector(tv,MET.mR*2.5))}
+ else{m.t+=dt;const P=m.pl.P,iw=_a.copy(m.pl.c).addScaledVector(m.dir,m.ir),tp=_d.copy(iw).addScaledVector(m.dir,P.R*.7).addScaledVector(m.sd,P.R);cam.position.lerp(tp,1-Math.exp(-1.2*dt));cam.up.copy(m.dir);cam.lookAt(iw);if(m.t>10)endCine()}
+ if(shake>.05){cam.position.x+=(Math.random()-.5)*shake*3;cam.position.y+=(Math.random()-.5)*shake*3;cam.position.z+=(Math.random()-.5)*shake*3}}
+function stepWeapons(dt){cd-=dt;mcd-=dt;if(lHeld&&mode==='ship')fireLaser();heat=Math.max(0,heat-dt*(ov?.5:.3));if(ov&&heat<.3)ov=false;amT+=dt;if(amT>4&&ammo<8){ammo++;amT=0}
+ for(const d of drones){if(d.dead){d.rt-=dt;if(d.rt<=0){d.dead=false;d.hp=3;d.m.visible=true}continue}d.dir.applyAxisAngle(d.ax,dt*d.w);d.pos.copy(d.pl.c).addScaledVector(d.dir,d.alt);d.m.rotation.y+=dt*2}
+ for(const v of viruses)if(v.dead){v.rt-=dt;if(v.rt<=0){v.dead=false;v.m.visible=true}}
+ const T0=tgts();updPeople(dt);updEnemies(dt);updSims(dt);updCraters(dt);envDmg(dt);if(mode==='walk')footPowers(dt,T0);else{vb.visible=false;vs.visible=false;bolts.forEach(b=>b.visible=false)}
+ for(let i=shots.length-1;i>=0;i--){const s=shots[i],p0=_a.copy(s.m.position);s.m.position.addScaledVector(s.v,dt);s.t-=dt;let hit=false;
+  const ab=_b.copy(s.m.position).sub(p0),l2=ab.lengthSq()||1;
+  for(const t of T0){const k=clamp(_c.copy(t.pos).sub(p0).dot(ab)/l2,0,1);if(_d.copy(p0).addScaledVector(ab,k).distanceTo(t.pos)<t.r){t.hit(1);hit=true;break}}
+  if(hit||s.t<=0){scene.remove(s.m);shots.splice(i,1)}}
+ for(let i=msls.length-1;i>=0;i--){const m=msls[i];if(m.tg&&m.tg.dead)m.tg=null;
+  if(m.tg){_a.copy(m.tg.pos).sub(m.g.position).normalize();m.d.lerp(_a,1-Math.exp(-2.4*dt)).normalize()}
+  m.s=Math.min(900,m.s+500*dt);m.g.position.addScaledVector(m.d,m.s*dt);m.g.quaternion.setFromUnitVectors(Zn,m.d);m.t-=dt;
+  let ex=m.t<=0;const[pl]=nearest(m.g.position);_b.copy(m.g.position).sub(pl.c);if(_b.length()<gR(pl,_b.normalize())+1)ex=true;
+  for(const t of T0)if(!t.dead&&t.pos.distanceTo(m.g.position)<t.r+6)ex=true;
+  if(ex){boom(m.g.position,60);for(const t of T0)if(!t.dead&&t.pos.distanceTo(m.g.position)<60)t.hit(3);scene.remove(m.g);msls.splice(i,1)}}
+ for(let i=fx.length-1;i>=0;i--){const f=fx[i];f.t+=dt;f.m.scale.setScalar(f.s*(1+f.t*8));f.m.material.opacity=Math.max(0,1-f.t/.6);if(f.t>.6){scene.remove(f.m);fx.splice(i,1)}}}
+const v=V(0,0,0);let last=performance.now();
+function frame(now){requestAnimationFrame(frame);let dt=Math.min(.05,(now-last)/1000);last=now;
+ let dl=1,sh=0;for(const h of holes){const d=ship.pos.distanceTo(h.p)-h.Rs;if(d<600){dl=Math.min(dl,.3+.7*d/600);sh=Math.max(sh,1-d/600)}}dt*=dl;if(running){orbit(dt);updMeteor(dt);updFrag(dt);updEra(dt);updFauna(dt)}
+ if(running){if(mode==='ship')stepShip(dt);else stepWalk(dt);stepWeapons(dt)}
+ mx=my=0;
+ shipMesh.position.copy(ship.pos);shipMesh.quaternion.copy(ship.q);shipMesh.userData.fl.scale.set(1,1,Math.max(.01,ship.thr*1.2));shipMesh.userData.fl.visible=ship.thr>.05;shipMesh.userData.el.intensity=ship.thr*.8;shipMesh.userData.fg.scale.setScalar(ship.thr*2.2+.01);
+ let focus=mode==='ship'?ship.pos:W.pos;
+ if(mode==='ship'){if(vmS===1){cam.position.copy(ship.pos).add(_c.set(0,.7,-.6).applyQuaternion(ship.q));cam.quaternion.copy(ship.q);shipMesh.visible=false}else{shipMesh.visible=true;const off=_c.set(0,vmS?14:3.2+ship.thr*.3,vmS?W.zoom*2.4:W.zoom+1+ship.thr*1.5).applyQuaternion(ship.q).add(ship.pos);cam.position.lerp(off,1-Math.exp(-9*dt));cam.up.set(0,1,0).applyQuaternion(ship.q);cam.lookAt(_d.set(0,2.6,0).applyQuaternion(ship.q).add(ship.pos))}
+  cam.fov=L(cam.fov,(keys.ShiftLeft||keys.ShiftRight)&&!ship.landed?88:(vmS===1?78:65),Math.min(1,4*dt));cam.updateProjectionMatrix()}
+ else{shipMesh.visible=true;const tf=65;if(Math.abs(cam.fov-tf)>.05){cam.fov=L(cam.fov,tf,Math.min(1,5*dt));cam.updateProjectionMatrix()}}
+ sh=Math.max(sh,shake);shake*=.8;if(sh>0){cam.position.x+=(Math.random()-.5)*sh*2;cam.position.y+=(Math.random()-.5)*sh*2;cam.position.z+=(Math.random()-.5)*sh*2}
+ const[pl,alt]=nearest(focus);sky(cam.position,nearest(cam.position)[0]);stars.position.copy(cam.position);
+ {const q=ship.pos;for(let i=0;i<1200;i+=3){dp[i]=q.x+(((dp[i]-q.x+60)%120)+120)%120-60;dp[i+1]=q.y+(((dp[i+1]-q.y+60)%120)+120)%120-60;dp[i+2]=q.z+(((dp[i+2]-q.z+60)%120)+120)%120-60}dg.attributes.position.needsUpdate=true;dust.material.opacity=.5*starMat.opacity}
+ if(eg){const t=mode==='ship'&&running&&!muted?clamp(ship.thr/4,0,1)*.25+(ship.landed?0:.04):0;eg.gain.value=L(eg.gain.value,t,.1);eo.frequency.value=50+ship.thr*18+Math.min(60,ship.vel.length()*.05)}
+ // HUD
+ for(const b of beacons){b.g.position.copy(b.pl.c).add(b.off);b.gem.rotation.y+=dt*1.5;b.gem.position.y=Math.sin(now*.003)*.4;if(!b.got&&mode==='walk'&&W.pos.distanceTo(b.g.position)<7){b.got=true;b.g.visible=false;relics++;msg(b.pl.P.name+' relic ('+relics+'/'+beacons.length+'): '+b.pl.P.done+(relics===beacons.length?' — ALL RELICS FOUND. You are a legend!':''),7000);beep(660,.25)}}
+ belt.rotation.y+=dt*.004;weather(dt,focus,pl);micro(dt,focus,pl);for(const c of comets){const r=c.pp/(1+c.e*Math.cos(c.th));c.th+=dt*c.k/(r*r);c.g.position.set(Math.cos(c.th)*r,0,Math.sin(c.th)*r).applyEuler(CE.set(c.tilt,0,c.tilt*.5));c.tail.quaternion.setFromUnitVectors(_d.set(0,-1,0),_c.copy(c.g.position).normalize())}for(const o of planets)if(o.cloud)o.cloud.rotation.y+=dt*.004;for(const h of holes)h.disk.rotation.y+=dt*36/h.Rs;
+ if(running&&!pl.seen&&alt<pl.P.R*.9){pl.seen=1;msg(pl.P.name+' — '+pl.P.story+'  MISSION: '+pl.P.quest+'.',10000)}
+ if(running&&mode==='walk'&&pl===cyto)for(const vr of viruses){if(vr.dead)continue;const rel=_a.copy(W.pos).sub(cyto.c).normalize(),ch=vr.dir.angleTo(rel)*cyto.P.R<220;
+  if(ch)_b.copy(rel);else _b.set(Math.sin(now*.0007+vr.ph),Math.cos(now*.0009+vr.ph*2),Math.sin(now*.0005+vr.ph*3));
+  _b.addScaledVector(vr.dir,-_b.dot(vr.dir)).normalize();vr.dir.addScaledVector(_b,(ch?11:4)*dt/cyto.P.R).normalize();
+  vr.m.position.copy(cyto.c).addScaledVector(vr.dir,gR(cyto,vr.dir)+3);vr.m.rotation.y+=dt;
+  if(vr.m.position.distanceTo(W.pos)<6){msg('Infected by a virus! Rushed to decontamination at your ship.',5000);placeNearShip()}}
+ const spd=mode==='ship'?ship.vel.length():W.hv.length(),P=pl.P;
+ $('loc').innerHTML=alt<P.R*2.5?'<b>'+P.name+'</b> — '+P.desc:'<b>Deep space</b> — nearest: '+P.name;
+ $('stat').textContent=(mode==='ship'?(ship.landed?'LANDED':'FLYING'):'ON FOOT')+' · alt '+fmt(Math.max(0,alt))+' · speed '+Math.round(spd)+' m/s · g '+(alt<P.R*5?P.g.toFixed(1):'0')+' m/s² · relics '+relics+'/'+beacons.length+(mode==='walk'?' · jet '+Math.round(W.fuel*100)+'%':' · vert '+Math.round(ship.vel.dot(_d.copy(ship.pos).sub(pl.c).normalize()))+' m/s');
+ const tp=planets[target];$('tgt').innerHTML='TARGET <b>'+tp.P.name+'</b><br>'+fmt(focus.distanceTo(tp.c)-tp.P.R)+' <span style="opacity:.6">[Tab]</span><br>'+(mode==='walk'?'EYE-BEAM '+Math.round((1-heat)*100)+'%'+(ov?' OVERHEAT':'')+' · FORCE '+Math.round(force*100)+'%':'LASER '+Math.round((1-heat)*100)+'%'+(ov?' OVERHEAT':'')+' · MISSILES '+ammo)+' · KILLS '+kills+(mode==='walk'?' · HP '+Math.round(hp):'')+'<br>Day '+day+' · '+String(Math.floor(tod)).padStart(2,'0')+':'+String(Math.floor(tod%1*60)).padStart(2,'0')+civHud(pl,alt);
+ // labels
+ for(const o of planets){v.copy(o.c).project(cam);const d=cam.position.distanceTo(o.c),e=o.el;
+  if(v.z>1||v.z<-1||d<o.P.R*3){e.style.display='none';continue}
+  e.style.display='block';e.style.transform='translate('+((v.x*.5+.5)*innerWidth)+'px,'+((-v.y*.5+.5)*innerHeight)+'px) translate(-50%,-50%)';e.lastChild.textContent=fmt(d-o.P.R);e.classList.toggle('t',o===tp)}
+ for(const h of holes){v.copy(h.p).project(cam);const d=cam.position.distanceTo(h.p),e=h.el;if(v.z>1||v.z<-1||d<h.Rs*2){e.style.display='none';continue}e.style.display='block';e.style.color='#ff8a6a';e.style.transform='translate('+((v.x*.5+.5)*innerWidth)+'px,'+((-v.y*.5+.5)*innerHeight)+'px) translate(-50%,-50%)';e.lastChild.textContent='⚠ '+fmt(d-h.Rs)}
+ for(const o of pois){v.copy(o.p).project(cam);const d=cam.position.distanceTo(o.p),e=o.el;if(v.z>1||v.z<-1||d<(o.r?o.r*.7:60)){e.style.display='none';continue}e.style.display='block';e.style.color=o.r?'#9fe8c0':'#bfe6ff';e.style.transform='translate('+((v.x*.5+.5)*innerWidth)+'px,'+((-v.y*.5+.5)*innerHeight)+'px) translate(-50%,-50%)';e.lastChild.textContent=fmt(d)}
+ if(mode==='walk'){v.copy(ship.pos).project(cam);const d=cam.position.distanceTo(ship.pos);if(v.z<1&&d>25){shipLbl.style.display='block';shipLbl.style.transform='translate('+((v.x*.5+.5)*innerWidth)+'px,'+((-v.y*.5+.5)*innerHeight)+'px) translate(-50%,-50%)';shipLbl.lastChild.textContent=fmt(d)}else shipLbl.style.display='none'}else shipLbl.style.display='none';
+ cineCam(dt);radar();renderer.render(scene,cam);
+}
+requestAnimationFrame(frame);
+</script></body></html>
